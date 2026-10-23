@@ -77,6 +77,48 @@ jobs:
           echo "BUILD_NUM=$BUILD_NUM" >> "$GITHUB_OUTPUT"
           echo "resolved tag=$TAG version=$VERSION build=$BUILD_NUM"
 
+      # 生成「本次修复了什么」：对比上一个 tag，把提交标题列成清单。
+      # 之所以用 git log 而不是手写 changelog：提交信息本来就是按功能写的，
+      # 自动汇总既不会漏，也不会忘更新。上一个 tag 缺失（首次构建）时退化为最近提交。
+      - name: Collect changes
+        id: changes
+        run: |
+          set -euo pipefail
+          PREV=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || true)
+          # 重新跑同一次构建时 HEAD 本身已被打标，往前退一个提交
+          RERUN=0
+          if [ -n "$PREV" ] && [ "$(git rev-parse "$PREV^{commit}")" = "$(git rev-parse HEAD)" ]; then
+            RERUN=1
+            PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          fi
+
+          if [ -n "$PREV" ]; then
+            COUNT=$(git rev-list --count "${PREV}..HEAD")
+            LOG=$(git log -n 40 --no-merges --pretty=format:'- %s' "${PREV}..HEAD")
+            HEADLINE="对比上一版本 \`${PREV}\`，共 ${COUNT} 个提交"
+          elif [ "$RERUN" = "1" ]; then
+            COUNT=0
+            LOG=""
+            HEADLINE="同一提交的重新构建，无新增提交"
+          else
+            COUNT=$(git rev-list --count HEAD)
+            LOG=$(git log -n 15 --no-merges --pretty=format:'- %s' HEAD)
+            HEADLINE="以下为最近提交（仓库共 ${COUNT} 个提交）"
+          fi
+
+          if [ -z "$LOG" ]; then
+            LOG="- 与上一版本相比没有代码改动，仅重新构建"
+          fi
+
+          {
+            echo "PREV=$PREV"
+            echo "HEADLINE=$HEADLINE"
+            echo "CHANGES<<__CHANGES_EOF__"
+            echo "$LOG"
+            echo "__CHANGES_EOF__"
+          } >> "$GITHUB_OUTPUT"
+          echo "changes since ${PREV:-<无>} : ${COUNT} 个提交"
+
       - name: Build debug APK
         run: |
           set -euo pipefail
@@ -115,6 +157,12 @@ jobs:
             release-out/*.apk
             release-out/*.sha256
           body: |
+            ${{ steps.changes.outputs.HEADLINE }}
+
+            ## 本次变更
+
+            ${{ steps.changes.outputs.CHANGES }}
+
             ## 安装说明
 
             | 项 | 值 |
