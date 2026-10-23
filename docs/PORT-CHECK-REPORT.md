@@ -1,0 +1,88 @@
+# 移植自检报告
+
+生成时间：2026-10-23
+基线：`aw1y2z/Sesame-M`（工作区最新代码，未改动原仓库）
+产出：`sesame-m-gr`，`applicationId = io.github.xqrx90.sesame.mgr`
+
+---
+
+## 一、规模
+
+| 项 | 数值 |
+| --- | --- |
+| Java 源文件 | 251 |
+| Kotlin 源文件 | 10 |
+| 相对 Sesame-M **新增**文件 | 16 |
+| 相对 Sesame-M **删除**文件 | 0 |
+| 提交数 | 5 |
+| 最近一次移植提交改动 | 18 文件 / +1226 / −4 行 |
+
+> 「−4 行」全部是参数化改造（`AntFarm` 领先蛋数、`FileUtil.clearLog`），**没有删除任何 M 的功能语句**。
+
+## 二、新增文件清单（16）
+
+### MTOP 直调层（3）
+- `mtop/bridge/MtopCaller.java`、`mtop/bridge/MtopHook.java`、`mtop/intervallimit/MtopIntervalLimit.java`
+
+### 独立功能模块（11）
+- `model/task/omegakoiTown/OmegakoiTown.java`、`OmegakoiTownRpcCall.java` —— 锦鲤小镇
+- `model/task/antOrchard/AntOrchardAutoHarvest.java` —— 果园自动收种
+- `model/task/antMember/MerchantService.java`、`MerchantServiceRpcCall.java` —— 商家服务
+- `model/task/antMember/SesameAlchemy.java`、`AlchemyRpcCall.java` —— 芝麻炼金
+- `model/task/antForest/StudentCheckIn.java` —— 学生签到红包
+- `model/normal/answerAI/AnswerAIInterface.java`、`GeminiAI.java`、`TongyiAI.java` —— AI 服务商
+
+### 配套实体 / 名单（2）
+- `entity/AlipayAntOrchardDrawTaskList.java`、`util/idMap/AntOrchardDrawTaskListMap.java`
+
+## 三、静态校验结果
+
+| 检查项 | 结果 |
+| --- | --- |
+| GR 旧命名空间残留（`lazyimmortal` / `XposedHelpers`） | **0 处** |
+| `package` 与目录一致性 | 251/251 通过 |
+| 大括号平衡（单遍词法扫描，正确跳过注释/字符串/文本块） | 251/251 平衡 |
+| 新增 RPC 签名与调用点逐一比对 | 23/23 匹配 |
+| 新增方法重复定义扫描 | 0 重复 |
+| `ModelOrder` 注册表 | 15 条，新增 Model 均已注册 |
+| 未注册 Model 子类 | 0 |
+| 跨类符号存在性（`XHelpers` / `Log` / `TimeUtil` / `IntervalLimit` 等） | 全部存在 |
+
+### 已修正的签名不一致（逐条比对中发现）
+
+| 调用点 | GR 版签名 | M 版签名 | 处理 |
+| --- | --- | --- | --- |
+| `AntMemberRpcCall.finishSesameTask` | `(String recordId)` | `(String recordId, String extCheck)` | 改调 2 参版本并传 `null`，请求体与 GR 完全一致 |
+| `AntOrchardRpcCall.finishTaskantorchard` | 需新增 | **M 已有**同签名同端点 | 删除重复实现，直接复用 M |
+| `MessageUtil.checkSuccess` | 返回 `boolean` | 返回 `Boolean`（装箱） | 调用处均为 `if` 条件，自动拆箱，无需改动 |
+
+## 四、与 Sesame-M 的兼容性
+
+| 项 | 处理 |
+| --- | --- |
+| `applicationId` | `io.github.xqrx90.sesame.mgr`（独立，可与 M / GR / 官方版共存） |
+| `namespace` | 保持 `io.github.aw1y2z.sesame` 不变（类全限定名、`ComponentName` 均未改） |
+| 配置目录 | `sesame-MGR`（M 为 `sesame-M`，互不覆盖） |
+| 广播 action | `io.github.xqrx90.sesame.mgr.status` |
+| 通知渠道 ID | `io.github.xqrx90.sesame.mgr.ANTFOREST_NOTIFY_CHANNEL` |
+| `versionCode` | `1000000 + gitCommitCount`（原为纯 commit 数，新仓库会退化成 1 导致无法覆盖安装） |
+| 签名 | 仓库内固定 `keystore/debug.keystore`（PKCS12，alias `androiddebugkey`），CI 每次产出一致签名 |
+| ABI 拆分 | 已移除 —— 本项目无 `.so`，ABI 拆分只会产出内容相同的重复包 |
+
+## 五、未能本地验证的部分
+
+| 项 | 原因 | 补救 |
+| --- | --- | --- |
+| `assembleNormalDebug` 编译 | 本机**无 JDK、无 Android SDK**，`java: command not found` | 由 GitHub Actions（JDK 17 + Android SDK）实际编译；编译报错按 CI 日志修正 |
+| 实机运行 / RPC 联通性 | 需支付宝宿主环境与真实账号 | 提供 debug 包给用户自测；每个新开关默认 **false**，不影响原有行为 |
+
+> 所有移植开关默认值均为 **false**（或「保持 M 原行为」的中性值），因此即使某项逻辑有偏差，
+> 只要不主动开启就不会影响既有功能。
+
+## 六、风险提示
+
+1. **`switchNewMonopolyMap` 未移植**：GR 该逻辑内嵌在 `monopoly()` 主体约百行，需重构 M 方法主体，已记入判定表待后续单独处理。
+2. **抽奖时序差异**：GR 的 `orchardDrawListTask` 末尾会顺带把抽奖次数抽完；本项目只做「做任务换次数」，
+   抽奖交给 M 已有的「抽抽乐(阿肥寻宝记)」开关，避免同轮重复抽奖。若两个开关都开，抽奖由后者统一驱动。
+3. **能量消耗型开关**：健康岛「兑好礼」与 PK 赛「保护古树」都会消耗能量，已分别加「单日兑换上限」与
+   「段位未知则整轮跳过」的保护，但仍建议先小范围开启观察日志。
