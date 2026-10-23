@@ -1137,6 +1137,11 @@ public class AntSports extends ModelTask {
                 return;
             }
             int charityCoinCount = jo.getInt("charityCoinCount");
+            // donateCharityCoinAmount 的配置项在 getFields() 中已停用（addField 被注释），字段恒为 null，
+            // 直接 getValue() 会 NPE。判空后退出：保持功能停用现状，不产生异常日志噪音。
+            if (donateCharityCoinAmount == null || donateCharityCoinAmount.getValue() == null) {
+                return;
+            }
             int donateCharityCoin = donateCharityCoinAmount.getValue();
             if (charityCoinCount < donateCharityCoin) {
                 return;
@@ -1154,7 +1159,8 @@ public class AntSports extends ModelTask {
                 }
                 if (donate(donateCharityCoin, jo.getString("projectId"), jo.getString("title"))) {
                     charityCoinCount -= donateCharityCoin;
-                    if (donateCharityCoinType.getValue() != DonateCharityCoinType.ALL) {
+                    // donateCharityCoinType 同样已停用（恒 null）：为空时按「只捐一次」处理，不再取 getValue()
+                    if (donateCharityCoinType == null || donateCharityCoinType.getValue() != DonateCharityCoinType.ALL) {
                         break;
                     }
                     if (charityCoinCount < donateCharityCoin) {

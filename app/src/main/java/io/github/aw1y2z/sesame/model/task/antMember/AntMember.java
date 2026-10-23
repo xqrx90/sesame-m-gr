@@ -574,7 +574,10 @@ public class AntMember extends ModelTask {
                 String templateId = jo.getString("templateId");
                 String promiseName = jo.getString("promiseName");
                 String status = jo.getString("status");
-                if ("un_join".equals(status) && promiseList.getValue().contains(templateId)) {
+                // promiseList 的配置项在 getFields() 中已停用（addField 被注释），字段恒为 null。
+                // 这里先判空：既保持功能停用现状，又避免将来恢复入口时直接 NPE。
+                if ("un_join".equals(status) && promiseList != null && promiseList.getValue() != null
+                        && promiseList.getValue().contains(templateId)) {
                     promiseJoin(querySingleTemplate(templateId));
                 }
                 PromiseSimpleTemplateIdMap.add(templateId, promiseName);

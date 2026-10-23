@@ -86,3 +86,83 @@
    抽奖交给 M 已有的「抽抽乐(阿肥寻宝记)」开关，避免同轮重复抽奖。若两个开关都开，抽奖由后者统一驱动。
 3. **能量消耗型开关**：健康岛「兑好礼」与 PK 赛「保护古树」都会消耗能量，已分别加「单日兑换上限」与
    「段位未知则整轮跳过」的保护，但仍建议先小范围开启观察日志。
+
+---
+
+# 第二轮：全量代码自检（跨文件连通性 + 缺陷修复）
+
+第一轮是「移植过程中的逐点比对」，第二轮把范围扩大到**全部 251 个 java + 10 个 kt**，
+目标是回答一个问题：*代码之间到底通不通？*
+
+## 七、方法：自建静态分析器，并用注入用例证明它有效
+
+本机无 JDK / Android SDK，无法编译，所以用 Python 写了 4 个词法级分析器
+（能正确跳过行/块注释、字符串、字符字面量、文本块，避免把注释里的代码当成代码）：
+
+| 工具 | 作用 |
+| --- | --- |
+| `java_analyzer.py` | 全仓符号表（package / import / 类 / 方法名+参数类型 / 字段）+ 跨类调用解析 |
+| `bugscan.py` | JSON 硬取、资源未关闭、空 catch、switch 穿透 |
+| `fields_check.py` | 开关字段「声明 vs 注册」一致性、`setDependsOn` 目标存在性 |
+| `code_audit.py` | 开关 code 唯一性、与参考仓的差集 |
+
+> **关键一步：证明分析器不是"僵尸通过"。** 每个检查项都造了最小注入用例，
+> 确认它能抓出该抓的、且不误报不该抓的。例如：
+> `A.missing(1)` → 报"方法不存在"；`A.ok()` → 报"参数数不符"；`A.name(1,2)` → 同样报出；
+> 缺 import 的跨包调用 → 报出；全限定类名写错 → 报出；嵌套枚举 `values()` → 不误报；
+> `case 1:` 无 break → 报出，而 `case 1: case 2:`（合并标签）与带 `break`/`return` 的 → 不报。
+
+分析器本身迭代修正了 7 处盲区，这 7 处每修一个，误报就从数百条降到个位：
+Kotlin 无分号导致 `package` 吞掉整个文件、`void`/基本类型被当关键字而丢弃方法定义、
+泛型尖括号里的逗号被当成参数分隔符、枚举隐式方法与业务方法同名、
+`import android.util.Log` 遮蔽仓内同名类、`companion object` 与嵌套 data class 构造器、
+继承链上的静态方法。
+
+## 八、检查矩阵与结果
+
+| 检查项 | 结果 | 说明 |
+| --- | --- | --- |
+| 跨类调用目标方法是否存在 | **0 错误** | 含继承链、父类静态方法、嵌套类 |
+| 调用点参数个数与方法签名是否匹配 | **0 警告** | 兼容 varargs 与泛型 |
+| 跨包引用是否漏 `import` | **0 错误** | 同包/通配符/静态导入均正确识别 |
+| 本项目包下的全限定引用 | **0 错误** | 类名均在仓内存在 |
+| 同签名方法重复定义（编译错误） | **0** | 按「参数类型签名」判重，不误报合法重载 |
+| `ModelTask` 子类是否都已注册 | **0 遗漏** | 13 个子类 + `AnswerAI`/`BaseModel` 全部在 `ModelOrder` |
+| 开关 code 唯一性 | **4 处跨 Model 重复，均无害** | 配置按 `modelCode` 隔离存储，不同模块同名不串号 |
+| `setDependsOn` 目标 code 是否存在 | **0** | 联动链全部有效 |
+| JSON 硬取未在 try 内 | **0** | 移植代码统一用 `optXxx` + 空判 |
+| 流/Reader 打开后未关闭 | **0** | 均为 try-with-resources 或 try/finally 手动 close |
+| switch case 穿透 | **0** | — |
+| 大括号平衡 / `package` 与目录一致 | **251/251 通过** | 词法级扫描 |
+| 空 catch 块 | 33 处（**均为有意忽略**） | 集中在 hook 层 `catch (Throwable ignored) {}`，属正常写法 |
+
+## 九、本轮发现并修复的问题
+
+| # | 位置 | 问题 | 处理 |
+| --- | --- | --- | --- |
+| 1 | `AntMember.promise()` | `promiseList` 的配置项在 `getFields()` 中被注释停用 → 字段恒 `null`，但 577 行直接 `promiseList.getValue()`，**无判空** | 补 `promiseList != null && getValue() != null`：保持停用现状，恢复入口时不再 NPE |
+| 2 | `AntSports.queryProjectList()` | 同类问题：`donateCharityCoinAmount.getValue()`、`donateCharityCoinType.getValue()` 直接拆箱，字段恒 `null` 必 NPE | 前者加判空提前 `return`，后者加 `== null ||` 按「只捐一次」处理 |
+| 3 | `StudentCheckIn` | 阶段 2 已移植该类，但**全仓零引用**——移植了却没接上，功能实际用不了 | 在 `AntForestV2` 新增开关「青春特权 \| 学生签到红包」（默认 **false**，与 GR 上游把该调用注释掉的状态一致），接回执行链 |
+
+> 问题 1、2 是 **Sesame-M 上游自带的缺陷**（GR 同样存在）：功能被注释停用后，执行代码没跟着清理。
+> 两处目前都处于不可达分支（`promise()` / `queryProjectList()` 均无调用点），所以此前不会真的崩，
+> 但一旦恢复调用入口就会立刻 NPE，属于定时炸弹。
+
+## 十、判定为「无害 / 等价复用」而不改动的项
+
+| 项 | 结论 |
+| --- | --- |
+| 10 个「死字段」（仅声明、无任何引用） | 如 `AntOrchard.orchardPlantNew`、`AntSports.energyStrategy`、`AntOrchard.driveAnimal*` 等，**GR 上游同样存在**（已逐项核对），属历史残留，不影响运行 |
+| 6 处「声明未注册但被引用」 | `AntForestV2.doubleClickType` / `doubleCardConstant`、`AntMember.promiseList`、`AntSports.donateCharityCoin*`。前三处的使用点原本就有 `== null` 保护，后两处已在本轮补上 |
+| 与 GR 的 28 项开关差集 | 逐项核对后 **无真实功能缺口**：≥20 项由 M 的等价实现覆盖（如 GR `debugMode` → M `AppConfig.enableDebugLog`；GR `goldenBeans*` 6 项 → M 独立 `goldenbeans` 模块的 `goldenBeansAutoManureExchange`/`ManureExchangeLimit`/`SesameExchangeLimit`/`GameDraw` 等）；`competitionStarNum`/`competitionDailyLimit` 是 GR 那套偷榜算法的参数，M 用 `competitionLeadEggs` 实现了同类能力；`promise`/`promiseList` 两端都已停用；`switchNewMonopolyMap` 为已记录的未移植项 |
+| 4 处 code 重复 | `assistFriend`、`assistFriendList`、`drawGameCenterAward`、`executeInterval` 分布在不同的 Model 内，配置按 `modelCode` 隔离，不会串号 |
+
+## 十一、仍未本地验证的部分
+
+| 项 | 原因 |
+| --- | --- |
+| 实际编译 | 本机无 JDK / 无 Android SDK，只能由 GitHub Actions（JDK 17 + Android SDK）真正编译 |
+| RPC 联通性 | 需支付宝宿主环境与真实账号 |
+
+第二轮已在**静态可判定范围内做到零错误**：跨类调用、参数、方法名、import、注册表、字段联动
+全部闭合。剩余风险集中在「运行时宿主接口是否如预期」这一类，只能靠实机验证。

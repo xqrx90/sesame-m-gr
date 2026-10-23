@@ -267,6 +267,8 @@ public class AntForestV2 extends ModelTask {
     private SelectModelField whoYouWantToGiveTo;
     private BooleanModelField ecoLife;
     private BooleanModelField youthPrivilege;
+    /** 青春特权｜学生签到领红包（自 Sesame-GR 移植，默认关闭：GR 上游该调用被注释） */
+    private BooleanModelField youthPrivilegeStudentSignIn;
     private SelectModelField ecoLifeOptions;
     private BooleanModelField dress;
     private BooleanModelField readForest;
@@ -388,6 +390,7 @@ public class AntForestV2 extends ModelTask {
         modelFields.addField(greenRent = new BooleanModelField("greenRent", "绿色租赁", false));
         modelFields.addField(readForest = new BooleanModelField("readForest", "无纸阅读", false));
         modelFields.addField(youthPrivilege = new BooleanModelField("youthPrivilege", "青春特权 | 森林道具", false));
+        modelFields.addField(youthPrivilegeStudentSignIn = new BooleanModelField("youthPrivilegeStudentSignIn", "青春特权 | 学生签到红包", false));
         modelFields.addField(ecoLife = new BooleanModelField("ecoLife", "绿色行动 | 开启", false));
         modelFields.addField(ecoLifeOptions = new SelectModelField("ecoLifeOptions", "绿色行动 | 选项", new LinkedHashSet<>(), CustomOption::getEcoLifeOptions, "光盘行动需要先手动完成一次").setDependsOn("ecoLife"));
         modelFields.addField(partnerteamWater = new BooleanModelField("partnerteamWater", "组队合种浇水", false));
@@ -490,6 +493,11 @@ public class AntForestV2 extends ModelTask {
                 // 青春特权道具（大学生双击卡/能量罩/加速器）与「森林任务」共用同一套实现，
                 // 由 queryTaskList 内部按 vitalityTask::<firstTaskType> 逐任务标记
                 queryVitalityYouthTaskList();
+            }
+            // 青春特权·学生签到领红包（自 Sesame-GR 移植）。
+            // GR 上游此调用被注释停用，故默认关闭；开启后走 StudentCheckIn 的独立 5 点后签到逻辑。
+            if (youthPrivilegeStudentSignIn.getValue()) {
+                StudentCheckIn.studentSignInRedEnvelope();
             }
             //连续兑换使用道具卡片
             continuousUseCardOptions();
