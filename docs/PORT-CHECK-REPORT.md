@@ -135,6 +135,8 @@ Kotlin 无分号导致 `package` 吞掉整个文件、`void`/基本类型被当�
 | switch case 穿透 | **0** | — |
 | 大括号平衡 / `package` 与目录一致 | **251/251 通过** | 词法级扫描 |
 | 空 catch 块 | 33 处（**均为有意忽略**） | 集中在 hook 层 `catch (Throwable ignored) {}`，属正常写法 |
+| **RPC 端点：本仓 vs 上游 Sesame-M** | **575 个同名方法，0 处不一致** | 硬证明：移植过程**没有改动上游任何既有 RPC**，新增的 20 个方法全部是追加 |
+| RPC 端点：本仓 vs Sesame-GR | 613 个同名方法，17 处不一致 | 逐条核对后：15 处是 M 与 GR 的固有演进差异（如 M 更新过参数格式）或字符串换行导致的切分差异；1 处 `joinSesameTask` 的 `sceneCode=zml` 上游 M 本来就有；**1 处是真问题**，见第九章第 4 条 |
 
 ## 九、本轮发现并修复的问题
 
@@ -143,6 +145,7 @@ Kotlin 无分号导致 `package` 吞掉整个文件、`void`/基本类型被当�
 | 1 | `AntMember.promise()` | `promiseList` 的配置项在 `getFields()` 中被注释停用 → 字段恒 `null`，但 577 行直接 `promiseList.getValue()`，**无判空** | 补 `promiseList != null && getValue() != null`：保持停用现状，恢复入口时不再 NPE |
 | 2 | `AntSports.queryProjectList()` | 同类问题：`donateCharityCoinAmount.getValue()`、`donateCharityCoinType.getValue()` 直接拆箱，字段恒 `null` 必 NPE | 前者加判空提前 `return`，后者加 `== null ||` 按「只捐一次」处理 |
 | 3 | `StudentCheckIn` | 阶段 2 已移植该类，但**全仓零引用**——移植了却没接上，功能实际用不了 | 在 `AntForestV2` 新增开关「青春特权 \| 学生签到红包」（默认 **false**，与 GR 上游把该调用注释掉的状态一致），接回执行链 |
+| 4 | `AntForestRpcCall.queryMonopolyMapPage()` | **本轮我自己的移植偏差**：该方法是新增的，但传参复用了 M 的 `monopolyPayload()`，其 `source` 是 `monopoly_home_board`；而 GR 原版此接口用的是 `monopoly_home_animal`。两者属于不同功能域，用错会导致地图查询被服务端拒绝 | 改为严格照 GR 硬编码 `monopoly_home_animal` + 随机 `uniqueId`，并在注释里说明为何**不**复用 `monopolyPayload()` |
 
 > 问题 1、2 是 **Sesame-M 上游自带的缺陷**（GR 同样存在）：功能被注释停用后，执行代码没跟着清理。
 > 两处目前都处于不可达分支（`promise()` / `queryProjectList()` 均无调用点），所以此前不会真的崩，

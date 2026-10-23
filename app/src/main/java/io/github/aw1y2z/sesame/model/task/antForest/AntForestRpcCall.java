@@ -981,9 +981,15 @@ public class AntForestRpcCall {
                         + ",\"timezoneId\":\"Asia/Shanghai\",\"source\":\"ant_forest\"}]");
     }
 
-    /** 新版保护地：查询地图页（返回 regionList / currentRegionMapList） */
+    /**
+     * 新版保护地：查询地图页（返回 regionList / currentRegionMapList）。
+     * <p>此接口的 source 必须是 {@code monopoly_home_animal}，与 M 看板系列用的
+     * {@link #MONOPOLY_SOURCE}（{@code monopoly_home_board}）不是同一个功能域，故不复用
+     * {@link #monopolyPayload(String)}，严格照 Sesame-GR 原样传参。
+     */
     public static String queryMonopolyMapPage() {
-        return ApplicationHook.requestString("alipay.antisle.monopoly.h5.queryMonopolyMapPage", monopolyPayload(""));
+        return ApplicationHook.requestString("alipay.antisle.monopoly.h5.queryMonopolyMapPage",
+                "[{\"source\":\"monopoly_home_animal\",\"uniqueId\":\"" + RandomUtil.getRandomString(16) + "\"}]");
     }
 
     /** 新版保护地：领取证书（走 antmember exchangeTree，source=monopoly_exchange_mappage） */
