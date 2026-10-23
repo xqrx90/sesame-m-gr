@@ -247,4 +247,12 @@ public class AntOrchardRpcCall {
         return orchardSyncIndex();
     }
 
+
+    // ===== 以下为自 Sesame-GR 移植：农场抽抽乐任务所需接口 =====
+
+    /** 查询抽抽乐任务列表（sceneCode=ANTORCHARD_DRAW_TIMES_TASK） */
+    public static String orchardDrawListTask() {
+        return ApplicationHook.requestString("com.alipay.antieptask.listTaskantorchard",
+                "[{\"extend\":{\"appMode\":\"normal\"},\"requestType\":\"RPC\",\"sceneCode\":\"ANTORCHARD_DRAW_TIMES_TASK\",\"source\":\"antorchard\"}]");
+    }
 }

@@ -960,4 +960,36 @@ public class AntForestRpcCall {
         String args1 = "[{\"bizType\":\"ANTFOREST\",\"commonDegradeFilterRequest\":{\"appMode\":\"normal\",\"deviceLevel\":\"high\",\"platform\":\"Android\",\"unityDeviceLevel\":\"high\"},\"playTypeList\":[\"TASK_TRIGGER\",\"TOP_UP_COUPON\"],\"recentAppRecordList\":[],\"requestType\":\"RPC\",\"sceneCode\":\"ANTFOREST_COMMON\",\"source\":\"chInfo_ch_appcenter__chsub_9patch\",\"version\":\"" + VERSION + "\"}]";
         return ApplicationHook.requestString("com.alipay.charitygamecenter.queryOptionalPlay", args1);
     }
+
+    // ===== 以下为自 Sesame-GR 移植：动物碎片合成 / 新版保护地证书 =====
+
+    /** 查询动物与碎片：animalId=0 时返回全部动物(含 pieces[].holdsNum)，非 0 时只查该动物 */
+    public static String queryAnimalAndPiece(int animalId) {
+        String args;
+        if (animalId != 0) {
+            args = "[{\"animalId\":" + animalId + ",\"source\":\"ant_forest\",\"timezoneId\":\"Asia/Shanghai\"}]";
+        } else {
+            args = "[{\"source\":\"ant_forest\",\"timezoneId\":\"Asia/Shanghai\",\"withDetail\":\"N\",\"withGift\":true}]";
+        }
+        return ApplicationHook.requestString("alipay.antforest.forest.h5.queryAnimalAndPiece", args);
+    }
+
+    /** 合成动物碎片：piecePropIds 为各碎片道具 id 的 JSON 数组字符串 */
+    public static String combineAnimalPiece(int animalId, String piecePropIds) {
+        return ApplicationHook.requestString("alipay.antforest.forest.h5.combineAnimalPiece",
+                "[{\"animalId\":" + animalId + ",\"piecePropIds\":" + piecePropIds
+                        + ",\"timezoneId\":\"Asia/Shanghai\",\"source\":\"ant_forest\"}]");
+    }
+
+    /** 新版保护地：查询地图页（返回 regionList / currentRegionMapList） */
+    public static String queryMonopolyMapPage() {
+        return ApplicationHook.requestString("alipay.antisle.monopoly.h5.queryMonopolyMapPage", monopolyPayload(""));
+    }
+
+    /** 新版保护地：领取证书（走 antmember exchangeTree，source=monopoly_exchange_mappage） */
+    public static String newMonopolyExchangeTree(int projectId) {
+        return ApplicationHook.requestString("alipay.antmember.forest.h5.exchangeTree",
+                "[{\"projectId\":" + projectId + ",\"sToken\":\"" + System.currentTimeMillis()
+                        + "\",\"source\":\"monopoly_exchange_mappage\",\"version\":\"20230501\"}]");
+    }
 }

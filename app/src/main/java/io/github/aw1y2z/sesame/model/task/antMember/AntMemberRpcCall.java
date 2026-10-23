@@ -976,4 +976,29 @@ public class AntMemberRpcCall {
             return null;
         }
     }
+
+    // ===== 以下为自 Sesame-GR 移植：消费金签到 / 芝麻炼金攒粒任务 =====
+
+    /** 消费金签到-查询当日签到状态（isSignInToday） */
+    public static String signinCalendar() {
+        return ApplicationHook.requestString("alipay.mobile.ipsponsorprod.consume.gold.task.signin.calendar", "[{}]");
+    }
+
+    /** 消费金签到-开启签到宝箱（amount/consecutiveSignInDays） */
+    public static String openBoxAward() {
+        return ApplicationHook.requestString("alipay.mobile.ipsponsorprod.consume.gold.task.openBoxAward",
+                "[{\"actionAwardDetails\":[{\"actionType\":\"date_sign_start\"}],\"bizType\":\"CONSUME_GOLD\",\"boxType\":\"CONSUME_GOLD_SIGN_DATE\",\"clientVersion\":\"6.3.0\",\"timeScaleType\":0,\"userType\":\"new\"}]");
+    }
+
+    /** 芝麻炼金-攒粒任务领取（sceneCode=alchemy，与会员页 zml 任务区分） */
+    public static String joinSesameGrainTask(String taskTemplateId) {
+        String requestData = "[{\"chInfo\":\"seasameList\",\"joinFromOuter\":false,\"sceneCode\":\"alchemy\",\"templateId\":\"" + taskTemplateId + "\"}]";
+        return ApplicationHook.requestString("com.antgroup.zmxy.zmmemberop.biz.rpc.promise.PromiseRpcManager.joinActivity", requestData);
+    }
+
+    /** 芝麻炼金-攒粒任务回调（actionType=TO_COMPLETE，version=alchemy） */
+    public static String feedBackSesameGrainTask(String taskTemplateId) {
+        String requestData = "[{\"actionType\":\"TO_COMPLETE\",\"bizType\":\"LIFE_RECORD\",\"sceneCode\":\"alchemy\",\"templateId\":\"" + taskTemplateId + "\",\"version\":\"alchemy\"}]";
+        return ApplicationHook.requestString("com.antgroup.zmxy.zmmemberop.biz.rpc.creditaccumulate.CreditAccumulateStrategyRpcManager.taskFeedback", requestData);
+    }
 }

@@ -125,4 +125,20 @@ public class AntDodoRpcCall {
     public static String queryMedalAndConfig() {
         return ApplicationHook.requestString("alipay.antdodo.rpc.h5.queryMedalAndConfig", "[{\"calculateV2\":true}]");
     }
+
+    // ===== 以下为自 Sesame-GR 移植：「帮抽交换 | 用历史最多卡片」所需接口 =====
+
+    /** 查询我的该动物图鉴收集情况，返回 data.animalCollectionInfoList[]（首项为持有数量最多的卡片） */
+    public static String queryMyCollection(String extendAnimalId) {
+        return ApplicationHook.requestString("alipay.antdodo.rpc.h5.queryMyCollection",
+                "[{\"extendAnimalId\":\"" + extendAnimalId + "\",\"pageSize\":18,\"pageStart\":\"0\"}]");
+    }
+
+    /** 用自己持有的卡片与好友互换：animalId=自己的卡，targetAnimalId/targetCardInstanceId/targetUserId=对方的卡与人 */
+    public static String exchange(String animalId, String targetAnimalId, String targetCardInstanceId, String targetUserId) {
+        return ApplicationHook.requestString("alipay.antdodo.rpc.h5.exchange",
+                "[{\"animalId\":\"" + animalId + "\",\"targetAnimalId\":\"" + targetAnimalId
+                        + "\",\"targetCardInstanceId\":\"" + targetCardInstanceId
+                        + "\",\"targetUserId\":\"" + targetUserId + "\"}]");
+    }
 }

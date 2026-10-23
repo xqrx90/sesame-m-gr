@@ -8,6 +8,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import io.github.aw1y2z.sesame.data.ModelFields;
 import io.github.aw1y2z.sesame.data.ModelGroup;
@@ -26,6 +28,7 @@ import io.github.aw1y2z.sesame.entity.AlipayTree;
 import io.github.aw1y2z.sesame.entity.CooperateUser;
 import io.github.aw1y2z.sesame.hook.Toast;
 import io.github.aw1y2z.sesame.model.base.TaskCommon;
+import io.github.aw1y2z.sesame.model.task.antForest.AntForestRpcCall;
 import io.github.aw1y2z.sesame.util.*;
 import io.github.aw1y2z.sesame.util.idMap.*;
 
@@ -57,6 +60,8 @@ public class ProtectEcology extends ModelTask {
     private IntegerModelField protectReserveNum;
     private static BooleanModelField protectBeachMinNum;
     private IntegerModelField protectBeachNum;
+    // 自 Sesame-GR 移植：能量 PK 赛季「保护古树」
+    private static BooleanModelField protectAncientMinNum;
     private static BooleanModelField protectBeach;
     private static SelectAndCountModelField protectBeachList;
     private static BooleanModelField protectAnimal;
@@ -82,6 +87,8 @@ public class ProtectEcology extends ModelTask {
         modelFields.addField(protectAnimalList = new SelectModelField("protectAnimalList", "保护动物 | 护林员列表", new HashSet<>(), AlipayAnimal::getList, "请选择需要点亮的护林员").setDependsOn("protectAnimal"));
         modelFields.addField(protectBeachMinNum = new BooleanModelField("protectBeachMinNum", "保护海洋 | 单个海滩保护", false));
         modelFields.addField(protectBeachNum = new IntegerModelField("protectBeachNum", "保护海洋 |海滩保护下限", 1).setDependsOn("protectBeachMinNum"));
+        // 自 Sesame-GR 移植
+        modelFields.addField(protectAncientMinNum = new BooleanModelField("protectAncientMinNum", "PK赛 | 保护古树", false));
         modelFields.addField(protectBeach = new BooleanModelField("protectBeach", "保护海洋 | 海滩", false));
         modelFields.addField(protectBeachList = new SelectAndCountModelField("protectOceanList", "保护海洋 | 海滩列表", new LinkedHashMap<>(), AlipayBeach::getList, "请填写保护次数(上限总量)").setDependsOn("protectBeach"));
         return modelFields;
@@ -125,6 +132,11 @@ public class ProtectEcology extends ModelTask {
         
         if (protectBeach.getValue()) {
             protectBeach();
+        }
+        
+        // 能量 PK 赛季「保护古树」（自 Sesame-GR 移植）
+        if (protectAncientMinNum.getValue()) {
+            protectAncientMinNum();
         }
     }
     
@@ -593,6 +605,146 @@ public class ProtectEcology extends ModelTask {
         }
         return null;
     }
+    // ===== 自 Sesame-GR 移植：能量 PK 赛季「保护古树」 =====
+
+    /** 当前能量 PK 赛季活动 id，形如 pkSeason4 */
+    private static String pkSeasonActivityId = "pkSeason4";
+    /** 用户当前段位等级，0 表示未解析到 */
+    private static int pkUserRankLevel = 0;
+
+    /**
+     * 从森林首页排行榜解析当前 PK 赛季号与用户段位等级。
+     * <p>证书 protectId 形如 {@code commonActivity#pk4Level7}，其中 pk4 即赛季号；
+     * 解析失败回退 {@code pkSeason4} / 0（0 时后续会跳过全部浇水，避免越级被服务端拒绝）。
+     */
+    private static void loadPkSeasonInfo() {
+        pkSeasonActivityId = "pkSeason4";
+        pkUserRankLevel = 0;
+        try {
+            JSONObject jo = new JSONObject(AntForestRpcCall.queryHomePage());
+            JSONObject combineMap = jo.optJSONObject("combineHandlerVOMap");
+            JSONObject rank = combineMap == null ? null : combineMap.optJSONObject("energyChallengeRank");
+            if (rank == null) {
+                return;
+            }
+            pkUserRankLevel = rank.optInt("level");
+            JSONArray heads = rank.optJSONArray("rankHeadPortraitVOS");
+            if (heads == null) {
+                return;
+            }
+            for (int i = 0; i < heads.length(); i++) {
+                JSONObject head = heads.optJSONObject(i);
+                JSONObject extInfo = head == null ? null : head.optJSONObject("extInfo");
+                JSONArray protectList = extInfo == null ? null : extInfo.optJSONArray("protectList");
+                if (protectList == null) {
+                    continue;
+                }
+                for (int j = 0; j < protectList.length(); j++) {
+                    JSONObject protect = protectList.optJSONObject(j);
+                    if (protect == null) {
+                        continue;
+                    }
+                    Matcher m = Pattern.compile("pk(\\d+)Level\\d+").matcher(protect.optString("protectId"));
+                    if (m.find()) {
+                        pkSeasonActivityId = "pkSeason" + m.group(1);
+                        return;
+                    }
+                }
+            }
+        }
+        catch (Throwable t) {
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
+    /**
+     * 能量 PK 赛季「保护古树」：queryTreeMap 查每级进度 → pkSeason2Home 查关卡能量 →
+     * pkSeason2Water 浇水 5000g 领证书。
+     * <p>
+     * 关键约束（照搬 GR 的踩坑结论）：
+     * <ul>
+     *   <li>{@code protectProgress.userRankLevel} 优先于首页解析值 —— 响应自带更准，避免越级浇水被拒；</li>
+     *   <li>段位未知(≤0)时整轮跳过，不做任何浇水；</li>
+     *   <li>该级 {@code protectCount>0} 视为已保护，直接跳过。</li>
+     * </ul>
+     */
+    private static void protectAncientMinNum() {
+        try {
+            loadPkSeasonInfo();
+            JSONObject jo = new JSONObject(ProtectTreeRpcCall.pkQueryTreeMap(pkSeasonActivityId));
+            if (!"SUCCESS".equals(jo.optString("resultCode"))) {
+                Log.record("古树保护🌳PK赛查询古树地图失败: " + jo.optString("resultDesc"));
+                return;
+            }
+            JSONObject actionData = jo.optJSONObject("actionData");
+            JSONObject resultData = actionData == null ? null : actionData.optJSONObject("resultData");
+            JSONObject protectProgress = resultData == null ? null : resultData.optJSONObject("protectProgress");
+            if (protectProgress == null) {
+                Log.record("古树保护🌳PK赛古树地图无保护进度数据");
+                return;
+            }
+            JSONArray levelProtectList = protectProgress.optJSONArray("levelProtectList");
+            if (levelProtectList == null || levelProtectList.length() == 0) {
+                return;
+            }
+            int userRankLevel = protectProgress.optInt("userRankLevel", 0);
+            if (userRankLevel <= 0) {
+                userRankLevel = pkUserRankLevel;
+            }
+            if (userRankLevel <= 0) {
+                Log.record("古树保护🌳PK赛未解析到用户段位，本轮跳过（避免越级浇水被拒）");
+                return;
+            }
+            for (int i = 0; i < levelProtectList.length(); i++) {
+                JSONObject levelObj = levelProtectList.optJSONObject(i);
+                if (levelObj == null) {
+                    continue;
+                }
+                int level = levelObj.optInt("level");
+                // 仅可保护小于等于用户当前段位等级的古树
+                if (level > userRankLevel) {
+                    continue;
+                }
+                // 该级已保护过则跳过
+                if (levelObj.optInt("protectCount") > 0) {
+                    continue;
+                }
+                String levelActivityId = pkSeasonActivityId.replace("pkSeason", "pk") + "Level" + level;
+                JSONObject homeJo = new JSONObject(ProtectTreeRpcCall.pkSeason2Home(levelActivityId));
+                if (!MessageUtil.checkResultCode(TAG, homeJo)) {
+                    continue;
+                }
+                JSONObject homeData = homeJo.optJSONObject("resultData");
+                if (homeData == null) {
+                    continue;
+                }
+                JSONObject donateConfig = homeData.optJSONObject("donateConfigVO");
+                int donateNum = donateConfig == null ? 5000 : donateConfig.optInt("donateNum", 5000);
+                long currentEnergy = homeData.optLong("currentEnergy");
+                if (currentEnergy < donateNum) {
+                    Log.record("古树保护🌳PK赛能量不足[" + currentEnergy + "/" + donateNum + "]停止保护");
+                    return;
+                }
+                JSONObject pageProperties = homeJo.optJSONObject("pageProperties");
+                String treeName = pageProperties == null ? levelActivityId : pageProperties.optString("activityName", levelActivityId);
+                String waterRes = ProtectTreeRpcCall.pkSeason2Water(levelActivityId, donateNum);
+                if (waterRes == null) {
+                    continue;
+                }
+                JSONObject waterJo = new JSONObject(waterRes);
+                if (!MessageUtil.checkResultCode(TAG, waterJo)) {
+                    Log.record("古树保护🌳PK赛[LV" + level + "]浇水失败: " + waterJo.optString("resultDesc"));
+                    continue;
+                }
+                Log.forest("古树保护🌳PK赛领取证书[LV" + level + "·" + treeName + "]消耗能量" + donateNum + "g");
+                TimeUtil.sleep(500);
+            }
+        }
+        catch (Throwable t) {
+            Log.err(TAG, "protectAncientMinNum err:", t);
+        }
+    }
+
     private static void protectReserveMinNum(int protectReserveNum) {
         if (protectReserveNum > 0) {
             try {

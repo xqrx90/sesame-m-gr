@@ -442,5 +442,19 @@ public class AntSportsRpcCall {
     public static String mapChooseReward(String branchId, String mapId, String rewardId) {
         String arg = "[{\"branchId\":\"" + branchId + "\",\"channel\":\"jkdsportcard\",\"mapId\":\"" + mapId + "\",\"rewardId\":\"" + rewardId + "\",\"source\":\"jkdsportcard\"}]";
         return ApplicationHook.requestString("com.alipay.neverland.biz.rpc.mapChooseReward", arg);
+    }
+
+    // ===== 以下为自 Sesame-GR 移植：健康岛「健康能量兑好礼」所需接口 =====
+
+    //{"page":1}
+    public static String queryItemList(int page) {
+        String arg = "[{\"page\":" + page + "}]";
+        return ApplicationHook.requestString("com.alipay.neverland.biz.rpc.queryItemList", arg);
+    }
+
+    //{"benefitId":"...","itemId":"..."}
+    public static String createOrder(String benefitId, String itemId) {
+        String arg = "[{\"benefitId\":\"" + benefitId + "\",\"itemId\":\"" + itemId + "\"}]";
+        return ApplicationHook.requestString("com.alipay.neverland.biz.rpc.createOrder", arg);
     }
 }

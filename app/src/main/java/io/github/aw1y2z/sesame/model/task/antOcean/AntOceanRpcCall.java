@@ -270,4 +270,19 @@ public class AntOceanRpcCall {
         return ApplicationHook.requestString("alipay.antaifish.h5.touchfish", 
             "[{\"source\":\"ANT_OCEAN\",\"uniqueId\":\"" + getAntfishUniqueId() + "\"}]");
     }
+
+
+    // ===== 以下为自 Sesame-GR 移植：海洋摸鱼「兑换科学证书」所需接口 =====
+
+    /** 查询证书(项目)详情，返回 project.phaseList[]，每项含 exchangeStatus(canExchange/levelNotEnough) */
+    public static String queryProjectDetail() {
+        return ApplicationHook.requestString("alipay.antaifish.h5.queryProjectDetail",
+                "[{\"source\":\"ANT_OCEAN\",\"uniqueId\":\"" + getAntfishUniqueId() + "\"}]");
+    }
+
+    /** 兑换证书，成功响应含 properties.protectContent/releasePoint/certificateName/region */
+    public static String exchangeProject() {
+        return ApplicationHook.requestString("alipay.antaifish.h5.exchangeProject",
+                "[{\"source\":\"ANT_OCEAN\",\"uniqueId\":\"" + getAntfishUniqueId() + "\"}]");
+    }
 }

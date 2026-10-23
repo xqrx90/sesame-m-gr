@@ -95,6 +95,14 @@ public class AntMember extends ModelTask {
 
     /** 网商银行福利金 */
     private BooleanModelField welfareFund;
+    // 以下自 Sesame-GR 移植
+    private BooleanModelField signinCalendar;
+    private BooleanModelField sesameAlchemy;
+    private BooleanModelField sesameAlchemySign;
+    private BooleanModelField sesameAlchemyGrainTask;
+    private BooleanModelField pointTreasureBox;
+    private BooleanModelField merchantSignIn;
+    private BooleanModelField merchantKMDK;
     private BooleanModelField welfareFundSign;
     private BooleanModelField welfareFundTask;
     private BooleanModelField AutoWelfareFundTaskList;
@@ -130,6 +138,14 @@ public class AntMember extends ModelTask {
         modelFields.addField(welfareFundTask = new BooleanModelField("welfareFundTask", "福利金 | 任务", true).setDependsOn("welfareFund"));
         modelFields.addField(AutoWelfareFundTaskList = new BooleanModelField("AutoWelfareFundTaskList", "福利金任务 | 自动黑名单", true).setDependsOn("welfareFundTask"));
         modelFields.addField(WelfareFundTaskList = new SelectModelField("WelfareFundTaskList", "福利金任务 | 黑名单列表", new LinkedHashSet<>(), AlipayWelfareFundTaskList::getList).setDependsOn("AutoWelfareFundTaskList"));
+        // 以下自 Sesame-GR 移植
+        modelFields.addField(signinCalendar = new BooleanModelField("signinCalendar", "消费金 | 签到", false));
+        modelFields.addField(sesameAlchemy = new BooleanModelField("sesameAlchemy", "芝麻炼金 | 消耗芝麻粒炼金", false));
+        modelFields.addField(sesameAlchemySign = new BooleanModelField("sesameAlchemySign", "芝麻炼金 | 签到", false));
+        modelFields.addField(sesameAlchemyGrainTask = new BooleanModelField("sesameAlchemyGrainTask", "芝麻粒 | 芝麻炼金任务", false));
+        modelFields.addField(pointTreasureBox = new BooleanModelField("pointTreasureBox", "芝麻积分 | 宝箱", false));
+        modelFields.addField(merchantSignIn = new BooleanModelField("merchantSignIn", "商家服务 | 签到", false));
+        modelFields.addField(merchantKMDK = new BooleanModelField("merchantKMDK", "商家服务 | 开门打卡", false));
         return modelFields;
     }
     
@@ -166,6 +182,10 @@ public class AntMember extends ModelTask {
                 CheckInTaskRpcManager();
                 collectSesame();
             }
+            // 芝麻炼金攒粒任务（自 Sesame-GR 移植，与会员页 zml 任务分开）
+            if (sesameAlchemyGrainTask.getValue()) {
+                alchemySesameTasks();
+            }
             
             //芝麻积攒进度
             if (SesameGrowthBehavior.getValue()) {
@@ -195,6 +215,25 @@ public class AntMember extends ModelTask {
             if (welfareFund.getValue()) {
                 WelfareFund.run(welfareFundSign.getValue(), welfareFundTask.getValue(),
                         AutoWelfareFundTaskList.getValue(), WelfareFundTaskList.getValue());
+            }
+            // 消费金签到（自 Sesame-GR 移植）
+            if (signinCalendar.getValue()) {
+                signinCalendar();
+            }
+            // 芝麻炼金 / 签到 / 芝麻积分宝箱（自 Sesame-GR 移植）
+            if (sesameAlchemy.getValue() || sesameAlchemySign.getValue() || pointTreasureBox.getValue()) {
+                SesameAlchemy.run(sesameAlchemy.getValue(), sesameAlchemySign.getValue(), pointTreasureBox.getValue());
+            }
+            // 商家服务（自 Sesame-GR 移植）
+            if (merchantSignIn.getValue() || merchantKMDK.getValue()) {
+                if (MerchantService.transcodeCheck()) {
+                    if (merchantSignIn.getValue()) {
+                        MerchantService.taskListQueryV2();
+                    }
+                    if (merchantKMDK.getValue()) {
+                        MerchantService.merchantKMDK();
+                    }
+                }
             }
         }
         catch (Throwable t) {
@@ -2537,6 +2576,151 @@ public class AntMember extends ModelTask {
         return recordId;
     }
     
+    // ===== 自 Sesame-GR 移植：消费金签到 =====
+
+    /** 消费金每日签到：未签则开签到宝箱，日志记录连续天数与所得消费金 */
+    private void signinCalendar() {
+        try {
+            JSONObject jo = new JSONObject(AntMemberRpcCall.signinCalendar());
+            if (!MessageUtil.checkSuccess(TAG, jo)) {
+                return;
+            }
+            if (jo.optBoolean("isSignInToday")) {
+                return;
+            }
+            jo = new JSONObject(AntMemberRpcCall.openBoxAward());
+            if (MessageUtil.checkSuccess(TAG, jo)) {
+                Log.other("攒消费金💰签到[坚持" + jo.optInt("consecutiveSignInDays") + "天]#获得[" + jo.optInt("amount") + "消费金]");
+            }
+        }
+        catch (Throwable t) {
+            Log.err(TAG, "signinCalendar err:", t);
+        }
+    }
+
+    // ===== 自 Sesame-GR 移植：芝麻炼金攒粒任务 =====
+
+    /**
+     * 芝麻炼金页的攒粒任务跑批：joinActivity 领任务 → taskFeedback 回调 → pushActivity 完成 → 收芝麻粒。
+     * <p>
+     * 与会员页 zml 任务的区别：sceneCode=alchemy，黑名单共用 {@code MemberCreditSesameTaskList}。
+     * 订阅类（SUBSCRIBE_TASK）与下单转化类（gameTaskType=zhuanhua）需要真实授权/购买，直接跳过。
+     */
+    private void alchemySesameTasks() {
+        try {
+            JSONObject jo = new JSONObject(AntMemberRpcCall.alchemyQueryTasks());
+            TimeUtil.sleep(300);
+            if (!MessageUtil.checkResultCode(TAG, jo)) {
+                return;
+            }
+            JSONObject data = jo.optJSONObject("data");
+            JSONArray toCompleteVOS = data == null ? null : data.optJSONArray("toCompleteVOS");
+            if (toCompleteVOS == null) {
+                return;
+            }
+            Set<String> blackList = MemberCreditSesameTaskList.getValue();
+            for (int i = 0; i < toCompleteVOS.length(); i++) {
+                JSONObject task = toCompleteVOS.optJSONObject(i);
+                if (task == null) {
+                    continue;
+                }
+                String taskTitle = task.optString("title");
+                if (taskTitle.isEmpty() || !task.has("templateId")) {
+                    continue;
+                }
+                if (blackList != null && blackList.contains(taskTitle)) {
+                    continue;
+                }
+                if (task.optBoolean("finishFlag", false) || "已完成".equals(task.optString("actionText"))) {
+                    continue;
+                }
+                if ("SUBSCRIBE_TASK".equals(task.optString("bizType"))
+                        || "zhuanhua".equals(task.optString("gameTaskType"))) {
+                    Log.record("芝麻炼金跳过攒粒任务[" + taskTitle + "]需真实操作或授权");
+                    continue;
+                }
+                String templateId = task.optString("templateId");
+                int needCompleteNum = task.optInt("needCompleteNum", 1);
+                int completedNum = task.optInt("completedNum", 0);
+                String recordId;
+                JSONObject responseObj;
+                if (!task.has("todayFinish")) {
+                    // 1) 领取任务
+                    String s = AntMemberRpcCall.joinSesameGrainTask(templateId);
+                    responseObj = new JSONObject(s);
+                    MessageUtil.checkResultCodeAndMarkTaskBlackList("MemberCreditSesameTaskList", taskTitle, responseObj);
+                    TimeUtil.sleep(200);
+                    if (!MessageUtil.checkResultCode(TAG, responseObj)) {
+                        Log.error(TAG + "芝麻炼金💳领取攒粒任务[" + taskTitle + "]失败#" + s);
+                        continue;
+                    }
+                    JSONObject joinData = responseObj.optJSONObject("data");
+                    recordId = joinData == null ? "" : joinData.optString("recordId");
+                    if (recordId.isEmpty()) {
+                        Log.error(TAG + "芝麻炼金💳领取攒粒任务[" + taskTitle + "]未获取到recordId#" + s);
+                        continue;
+                    }
+                    // 2) 任务回调上报（与 App 抓包时序一致：join → taskFeedback → push）
+                    AntMemberRpcCall.feedBackSesameGrainTask(templateId);
+                    TimeUtil.sleep(200);
+                }
+                else {
+                    recordId = task.optString("recordId");
+                    if (recordId.isEmpty()) {
+                        Log.error(TAG + "芝麻炼金💳攒粒任务[" + taskTitle + "]未获取到recordId#" + task);
+                        continue;
+                    }
+                }
+                // 3) 完成任务
+                boolean finishAll = true;
+                for (int j = completedNum; j < needCompleteNum; j++) {
+                    // M 的 finishSesameTask 比 GR 多一个 extCheck 参数；传 null 时请求体与 GR 完全一致
+                    String s = AntMemberRpcCall.finishSesameTask(recordId, null);
+                    TimeUtil.sleep(2000);
+                    responseObj = new JSONObject(s);
+                    MessageUtil.checkResultCodeAndMarkTaskBlackList("MemberCreditSesameTaskList", taskTitle, responseObj);
+                    if (MessageUtil.checkResultCode(TAG, responseObj)) {
+                        Log.other("芝麻炼金💳完成攒粒任务[" + taskTitle + "]#(" + (j + 1) + "/" + needCompleteNum + "天)");
+                    }
+                    else {
+                        Log.error("芝麻炼金💳完成攒粒任务[" + taskTitle + "]失败#" + s);
+                        finishAll = false;
+                        break;
+                    }
+                }
+                // 4) 收取已完成任务的芝麻粒
+                if (!finishAll) {
+                    continue;
+                }
+                JSONObject feedbackJo = new JSONObject(AntMemberRpcCall.queryCreditFeedback());
+                TimeUtil.sleep(300);
+                if (!MessageUtil.checkResultCode(TAG, feedbackJo)) {
+                    continue;
+                }
+                JSONArray feedbackVOS = feedbackJo.optJSONArray("creditFeedbackVOS");
+                if (feedbackVOS == null) {
+                    continue;
+                }
+                for (int j = 0; j < feedbackVOS.length(); j++) {
+                    JSONObject feedback = feedbackVOS.optJSONObject(j);
+                    if (feedback == null || !"UNCLAIMED".equals(feedback.optString("status"))) {
+                        continue;
+                    }
+                    String creditFeedbackId = feedback.optString("creditFeedbackId");
+                    String potentialSize = feedback.optString("potentialSize");
+                    JSONObject collectRes = new JSONObject(AntMemberRpcCall.collectCreditFeedback(creditFeedbackId));
+                    TimeUtil.sleep(300);
+                    if (MessageUtil.checkResultCode(TAG, collectRes)) {
+                        Log.other("收芝麻粒🙇🏻‍♂️领取[" + taskTitle + "]奖励[芝麻粒*" + potentialSize + "]");
+                    }
+                }
+            }
+        }
+        catch (Throwable t) {
+            Log.err(TAG, "alchemySesameTasks err:", t);
+        }
+    }
+
     private void CheckInTaskRpcManager() {
         if (Status.hasFlagToday("AntMember::zmlCheckIn")) {
             return;

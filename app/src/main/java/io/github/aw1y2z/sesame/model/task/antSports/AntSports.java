@@ -88,6 +88,9 @@ public class AntSports extends ModelTask {
     private BooleanModelField MapListSwitch;
 
     private BooleanModelField awardspecialActivityReceive;
+    // 自 Sesame-GR 移植：健康岛「健康能量兑好礼」
+    private BooleanModelField QUERY_ITEM_LIST;
+    private IntegerModelField QUERY_ITEM_LIST_MAX;
 
     //private SelectModelField neverLandOptions;
     private ChoiceModelField energyStrategy;
@@ -140,6 +143,10 @@ public class AntSports extends ModelTask {
         modelFields.addField(WALK_GRID_LIMIT = new IntegerModelField("WALK_GRID_LIMIT", "健康岛 | 使用能量泵剩余能量值(低于该值停止使用)", 10000).setDependsOn("neverLand"));
         modelFields.addField(MapListSwitch = new BooleanModelField("MapListSwitch", "健康岛 | 自动切岛", false).setDependsOn("neverLand"));
         modelFields.addField(awardspecialActivityReceive = new BooleanModelField("awardspecialActivityReceive", "健康岛 | 领取活动岛奖励", false).setDependsOn("neverLand"));
+        // 自 Sesame-GR 移植（GR 原版该功能的兑换白名单字段未注册进 getFields，恒为 null 会 NPE，
+        // 此处改为「剩余数量+状态+能量」三重判定并加单日上限，功能才真正可用）
+        modelFields.addField(QUERY_ITEM_LIST = new BooleanModelField("QUERY_ITEM_LIST", "健康岛 | 健康能量兑好礼", false).setDependsOn("neverLand"));
+        modelFields.addField(QUERY_ITEM_LIST_MAX = new IntegerModelField("QUERY_ITEM_LIST_MAX", "健康岛 | 兑好礼单日上限(0不限)", 5, 0, 100).setDependsOn("QUERY_ITEM_LIST"));
         return modelFields;
     }
 
@@ -379,6 +386,10 @@ public class AntSports extends ModelTask {
 
     /** 运动「做任务得运动币:签到」当日完成标记（服务端回读 signed=true 才落） */
     private static final String FLAG_SIGN_IN_COIN_TASK = "sports::signInCoinTask";
+    /** 「健康能量兑好礼」当日已兑换次数（自 Sesame-GR 移植） */
+    private static final String FLAG_EXCHANGE_BENEFITS_COUNT = "sports::exchangeBenefitsCount";
+    /** 「健康能量兑好礼」当日服务端繁忙（系统繁忙提示）标记，命中后当天不再重试 */
+    private static final String FLAG_EXCHANGE_BENEFITS_ERROR = "sports::exchangeBenefitsError";
 
     /** 命中风控就打当日标记并记一条结果日志；返回是否命中 */
     private static boolean markIfRisk(JSONObject jo) {
@@ -2404,12 +2415,100 @@ public class AntSports extends ModelTask {
             }
             // 处理基础信息相关任务
             queryBaseInfoAndProcess();
+            // 兑换权益（自 Sesame-GR 移植）
+            if (QUERY_ITEM_LIST.getValue()) {
+                exchangeBenefits();
+            }
             // 自动切岛
             if (MapListSwitch.getValue()) {
                 queryMapListSwitch();
             }
         } catch (Exception e) {
             Log.err(TAG, "run err:", e);
+        }
+    }
+
+    /**
+     * 健康岛「健康能量兑好礼」：翻页扫描可兑换权益，满足「剩余数量≥1 + 状态 ITEM_SALE + 能量足够」
+     * 就下单，单日最多兑换 {@code QUERY_ITEM_LIST_MAX} 次（0 = 不限）。
+     * <p>
+     * 与 Sesame-GR 原实现的差异：GR 依赖 {@code neverLandBenefitList} 白名单做过滤，但该字段从未注册进
+     * {@code getFields()}，运行时恒为 null，{@code contains()} 必然 NPE —— 该功能在 GR 里从未真正跑通。
+     * 这里去掉白名单，改用「单日兑换上限」控制消耗，避免把能量泵所需的健康能量刷光。
+     */
+    private void exchangeBenefits() {
+        try {
+            int maxCount = QUERY_ITEM_LIST_MAX.getValue();
+            int exchangedToday = Status.getIntFlagToday(FLAG_EXCHANGE_BENEFITS_COUNT);
+            if (maxCount > 0 && exchangedToday >= maxCount) {
+                Log.record("悦动健康🚑️兑好礼今日已达上限" + maxCount + "次，跳过");
+                return;
+            }
+            int currentEnergy = queryUserEnergy();
+            int page = 1;
+            boolean hasMore = true;
+            while (hasMore) {
+                if (Status.hasFlagToday(FLAG_EXCHANGE_BENEFITS_ERROR)) {
+                    return;
+                }
+                JSONObject jsonResult = new JSONObject(AntSportsRpcCall.queryItemList(page));
+                if ("系统繁忙，请稍后再试。".equals(jsonResult.optString("errorMessage"))) {
+                    Status.flagToday(FLAG_EXCHANGE_BENEFITS_ERROR);
+                    return;
+                }
+                if (!MessageUtil.checkSuccess(TAG, jsonResult)) {
+                    break;
+                }
+                JSONObject data = jsonResult.optJSONObject("data");
+                if (data == null) {
+                    break;
+                }
+                hasMore = data.optBoolean("hasMore");
+                JSONArray items = data.optJSONArray("itemVOList");
+                if (items == null) {
+                    break;
+                }
+                for (int i = 0; i < items.length(); i++) {
+                    if (maxCount > 0 && exchangedToday >= maxCount) {
+                        Log.record("悦动健康🚑️兑好礼今日已达上限" + maxCount + "次");
+                        return;
+                    }
+                    JSONObject item = items.optJSONObject(i);
+                    if (item == null || !"benefitItem".equals(item.optString("materialType"))) {
+                        continue;
+                    }
+                    String benefitId = item.optString("benefitId");
+                    String itemId = item.optString("itemId");
+                    String itemName = item.optString("itemName");
+                    int remainCount = item.optInt("remainCount");
+                    int cost;
+                    try {
+                        cost = Integer.parseInt(item.optString("salePoint"));
+                    }
+                    catch (NumberFormatException e) {
+                        continue;
+                    }
+                    if (remainCount < 1 || !"ITEM_SALE".equals(item.optString("status"))) {
+                        continue;
+                    }
+                    // 留 5g 余量：健康岛其他动作(前进/建造)最低消耗 5g
+                    if (currentEnergy < cost + 5) {
+                        continue;
+                    }
+                    String exchangeResult = AntSportsRpcCall.createOrder(benefitId, itemId);
+                    if (MessageUtil.checkSuccess(TAG, new JSONObject(exchangeResult))) {
+                        Log.other("悦动健康🚑️兑换权益[" + itemName + "]#消耗[" + cost + "g健康能量]");
+                        currentEnergy -= cost;
+                        exchangedToday++;
+                        Status.setIntFlagToday(FLAG_EXCHANGE_BENEFITS_COUNT, exchangedToday);
+                    }
+                    TimeUtil.sleep(500);
+                }
+                page++;
+            }
+        }
+        catch (Throwable t) {
+            Log.err(TAG, "exchangeBenefits err:", t);
         }
     }
 

@@ -176,6 +176,7 @@ public class AntFarm extends ModelTask {
     private BooleanModelField competitionStealRank;            // 爱心鸡结号 | 偷榜
     private IntegerModelField competitionStealMinutes;         // 爱心鸡结号 | 偷榜提前分钟数
     private IntegerModelField competitionStealLimit;           // 爱心鸡结号 | 偷榜捐献上限
+    private IntegerModelField competitionLeadEggs;             // 爱心鸡结号 | 捐至榜首领先蛋数（自 Sesame-GR 移植）
     private IntegerModelField competitionDonateAmount;         // 爱心鸡结号 | 自动捐蛋数量
     private BooleanModelField useBigEaterTool;
     //private ChoiceModelField getFeedType;
@@ -224,6 +225,8 @@ public class AntFarm extends ModelTask {
         modelFields.addField(competitionStealRank = new BooleanModelField("competitionStealRank", "爱心鸡结号 | 偷榜", false).setDependsOn("competition"));
         modelFields.addField(competitionStealMinutes = new IntegerModelField("competitionStealMinutes", "爱心鸡结号 | 偷榜提前分钟数", 30, 0, 240).setDependsOn("competitionStealRank"));
         modelFields.addField(competitionStealLimit = new IntegerModelField("competitionStealLimit", "爱心鸡结号 | 偷榜捐献上限(0不限)", 0, 0, 1000).setDependsOn("competitionStealRank"));
+        // 自 Sesame-GR 移植：偷榜时捐到超过第1名的蛋数。默认 1 与原硬编码值一致，行为不变
+        modelFields.addField(competitionLeadEggs = new IntegerModelField("competitionLeadEggs", "爱心鸡结号 | 偷榜领先蛋数", 1, 1, 1000).setDependsOn("competitionStealRank"));
         modelFields.addField(family = new BooleanModelField("family", "亲密家庭 | 开启", false));
         modelFields.addField(familyOptions = new SelectModelField("familyOptions", "亲密家庭 | 选项", new LinkedHashSet<>(), CustomOption::getAntFarmFamilyOptions).setDependsOn("family"));
         modelFields.addField(notInviteList = new SelectModelField("notInviteList", "亲密家庭 | 不邀请列表", new LinkedHashSet<>(), AlipayUser::getList).setDependsOn("family"));
@@ -1538,9 +1541,14 @@ public class AntFarm extends ModelTask {
                 Log.record("爱心鸡结号❤️偷榜：已第1名(捐" + myDonation + ")，无需操作");
                 return;
             }
-            int need = rank1Donation - myDonation + 1;
+            // 领先蛋数（自 Sesame-GR 移植）：默认 1，与原先硬编码的「+1」完全等价
+            int leadEggs = competitionLeadEggs.getValue();
+            if (leadEggs < 1) {
+                leadEggs = 1;
+            }
+            int need = rank1Donation - myDonation + leadEggs;
             if (need <= 0) {
-                need = 1;
+                need = leadEggs;
             }
             int have = (int) harvestBenevolenceScore;
             if (have <= 0) {

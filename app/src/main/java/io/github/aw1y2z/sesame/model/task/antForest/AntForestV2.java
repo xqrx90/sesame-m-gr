@@ -246,6 +246,10 @@ public class AntForestV2 extends ModelTask {
     private BooleanModelField vitalityExchangeBenefit;
     private SelectAndCountModelField vitality_ExchangeBenefitList;
     private BooleanModelField userPatrol;
+    // 自 Sesame-GR 移植
+    private BooleanModelField combineAnimalPiece;
+    private BooleanModelField newMonopolyExchangeTree;
+    private BooleanModelField preNewMonopolyExchangeTree;
     private BooleanModelField monopolyPatrol;
     private BooleanModelField monopolyTasks;
     private BooleanModelField monopolyAnimalEnergy;
@@ -362,6 +366,10 @@ public class AntForestV2 extends ModelTask {
         modelFields.addField(giveEnergyRainList = new SelectModelField("giveEnergyRainList", "赠送能量雨好友列表", new LinkedHashSet<>(), AlipayUser::getList));
         modelFields.addField(useEnergyRainLimit = new BooleanModelField("useEnergyRainLimit", "兑换使用限时能量雨卡", false));
         modelFields.addField(userPatrol = new BooleanModelField("userPatrol", "旧版保护地巡护", false));
+        // 自 Sesame-GR 移植
+        modelFields.addField(combineAnimalPiece = new BooleanModelField("combineAnimalPiece", "合成动物碎片", false));
+        modelFields.addField(newMonopolyExchangeTree = new BooleanModelField("newMonopolyExchangeTree", "新版保护地 | 领取证书", false));
+        modelFields.addField(preNewMonopolyExchangeTree = new BooleanModelField("preNewMonopolyExchangeTree", "新版保护地 | 提前兑换未开始保护地证书", false).setDependsOn("newMonopolyExchangeTree"));
         modelFields.addField(monopolyPatrol = new BooleanModelField("monopolyPatrol", "新版保护地 | 自动前进", false));
         modelFields.addField(monopolyTasks = new BooleanModelField("monopolyTasks", "新版保护地 | 自动任务", false));
         modelFields.addField(monopolyAnimalEnergy = new BooleanModelField("monopolyAnimalEnergy", "新版动物伙伴 | 领取能量", false));
@@ -696,8 +704,16 @@ public class AntForestV2 extends ModelTask {
                 if (userPatrol.getValue()) {
                     queryUserPatrol();
                 }
+                // 合成动物碎片（自 Sesame-GR 移植）
+                if (combineAnimalPiece.getValue()) {
+                    queryAnimalAndPiece();
+                }
                 if (monopolyPatrol.getValue()) {
                     monopolyPatrol();
+                }
+                // 新版保护地领取证书（自 Sesame-GR 移植）
+                if (newMonopolyExchangeTree.getValue()) {
+                    newMonopolyExchangeTree();
                 }
                 if (monopolyAnimalEnergy.getValue()) {
                     collectMonopolyAnimalEnergy();
@@ -4954,6 +4970,201 @@ public class AntForestV2 extends ModelTask {
             Log.err(TAG, "consumeAnimalProp err:", t);
         }
         return false;
+    }
+
+    // ===== 自 Sesame-GR 移植：动物碎片合成 =====
+
+    /** 遍历全部动物，碎片齐全的逐个合成（合成成功后用返回的 animalId 继续合成，直到合不出为止） */
+    private void queryAnimalAndPiece() {
+        try {
+            JSONObject jo = new JSONObject(AntForestRpcCall.queryAnimalAndPiece(0));
+            if (!MessageUtil.checkResultCode(TAG, jo)) {
+                return;
+            }
+            JSONArray animalProps = jo.optJSONArray("animalProps");
+            if (animalProps == null) {
+                return;
+            }
+            for (int i = 0; i < animalProps.length(); i++) {
+                JSONObject animalProp = animalProps.optJSONObject(i);
+                if (animalProp == null) {
+                    continue;
+                }
+                JSONObject animal = animalProp.optJSONObject("animal");
+                if (animal == null) {
+                    continue;
+                }
+                JSONArray pieces = animalProp.optJSONArray("pieces");
+                if (pieces == null || pieces.length() == 0) {
+                    continue;
+                }
+                boolean canCombine = true;
+                for (int j = 0; j < pieces.length(); j++) {
+                    JSONObject piece = pieces.optJSONObject(j);
+                    if (piece == null || piece.optInt("holdsNum", 0) <= 0) {
+                        canCombine = false;
+                        break;
+                    }
+                }
+                if (canCombine) {
+                    combineAnimalPiece(animal.optInt("id"));
+                }
+            }
+        }
+        catch (Throwable t) {
+            Log.err(TAG, "queryAnimalAndPiece err:", t);
+        }
+    }
+
+    /** 合成指定动物的碎片，成功后用新 id 继续，直到碎片不足或失败 */
+    private void combineAnimalPiece(int animalId) {
+        try {
+            do {
+                JSONObject jo = new JSONObject(AntForestRpcCall.queryAnimalAndPiece(animalId));
+                if (!MessageUtil.checkResultCode(TAG, jo)) {
+                    return;
+                }
+                JSONArray animalProps = jo.optJSONArray("animalProps");
+                JSONObject animalProp = animalProps == null || animalProps.length() == 0 ? null : animalProps.optJSONObject(0);
+                if (animalProp == null) {
+                    return;
+                }
+                JSONObject animal = animalProp.optJSONObject("animal");
+                if (animal == null) {
+                    return;
+                }
+                int id = animal.optInt("id");
+                String name = animal.optString("name");
+                JSONArray pieces = animalProp.optJSONArray("pieces");
+                if (pieces == null || pieces.length() == 0) {
+                    return;
+                }
+                boolean canCombine = true;
+                JSONArray piecePropIds = new JSONArray();
+                for (int j = 0; j < pieces.length(); j++) {
+                    JSONObject piece = pieces.optJSONObject(j);
+                    if (piece == null || piece.optInt("holdsNum", 0) <= 0) {
+                        canCombine = false;
+                        break;
+                    }
+                    JSONArray propIdList = piece.optJSONArray("propIdList");
+                    if (propIdList == null || propIdList.length() == 0) {
+                        canCombine = false;
+                        break;
+                    }
+                    piecePropIds.put(propIdList.optString(0));
+                }
+                if (!canCombine) {
+                    break;
+                }
+                jo = new JSONObject(AntForestRpcCall.combineAnimalPiece(id, piecePropIds.toString()));
+                if (!MessageUtil.checkResultCode(TAG, jo)) {
+                    break;
+                }
+                Log.forest("合成动物💡[" + name + "]");
+                animalId = id;
+                TimeUtil.sleep(100);
+            } while (true);
+        }
+        catch (Throwable t) {
+            Log.err(TAG, "combineAnimalPiece err:", t);
+        }
+    }
+
+    // ===== 自 Sesame-GR 移植：新版保护地领取证书 =====
+
+    /**
+     * 遍历当前区域全部地图，{@code certificateStatus=PENDING}（已保护未兑换）的领证书。
+     * <p>
+     * 未开放地图（{@code mapAvailability != AVAILABLE}）默认跳过，勾选
+     * 「提前兑换未开始保护地证书」才一并兑换。
+     */
+    private void newMonopolyExchangeTree() {
+        try {
+            JSONObject jo = new JSONObject(AntForestRpcCall.queryMonopolyMapPage());
+            if (!MessageUtil.checkResultCode(TAG, jo)) {
+                return;
+            }
+            String regionName = "";
+            JSONArray regionList = jo.optJSONArray("regionList");
+            if (regionList != null) {
+                for (int i = 0; i < regionList.length(); i++) {
+                    JSONObject region = regionList.optJSONObject(i);
+                    if (region != null && region.optBoolean("currentRegion")) {
+                        regionName = region.optString("regionName");
+                    }
+                }
+            }
+            JSONArray currentRegionMapList = jo.optJSONArray("currentRegionMapList");
+            if (currentRegionMapList == null) {
+                return;
+            }
+            for (int i = 0; i < currentRegionMapList.length(); i++) {
+                JSONObject map = currentRegionMapList.optJSONObject(i);
+                if (map == null) {
+                    continue;
+                }
+                // certificateStatus: PENDING=证书未兑换(未保护) OBTAINED=已兑换(已保护)
+                if (!"PENDING".equals(map.optString("certificateStatus"))) {
+                    continue;
+                }
+                if (!"AVAILABLE".equals(map.optString("mapAvailability")) && !preNewMonopolyExchangeTree.getValue()) {
+                    continue;
+                }
+                String mapCode = map.optString("mapCode");
+                int projectId = extractMonopolyProjectId(map.optJSONObject("displayInfo"));
+                if (projectId <= 0) {
+                    continue;
+                }
+                JSONObject exchangeRes = new JSONObject(AntForestRpcCall.newMonopolyExchangeTree(projectId));
+                if (!MessageUtil.checkResultCode(TAG, exchangeRes)) {
+                    return;
+                }
+                JSONObject cert = exchangeRes.optJSONObject("userCertificate");
+                String levelName = "";
+                String subName = "";
+                int level = 0;
+                if (cert != null) {
+                    JSONObject extendInfo = cert.optJSONObject("extendInfo");
+                    if (extendInfo != null) {
+                        level = extendInfo.optInt("level");
+                        levelName = extendInfo.optString("levelName");
+                        subName = extendInfo.optString("subName");
+                    }
+                }
+                if ("SUCCESS".equalsIgnoreCase(exchangeRes.optString("resultCode"))) {
+                    Log.forest("新保护地🌲[" + regionName + "-" + mapCode + "]证书兑换[" + levelName + "]LV" + level + "(" + subName + ")");
+                } else {
+                    Log.record("新保护地🌲[" + regionName + "-" + mapCode + "]证书兑换失败 projectId=" + projectId + " " + exchangeRes.optString("resultDesc"));
+                }
+                TimeUtil.sleep(500);
+            }
+        }
+        catch (Throwable t) {
+            Log.err(TAG, "newMonopolyExchangeTree err:", t);
+        }
+    }
+
+    /** 从新版保护地地图 displayInfo 的跳转链接提取 projectId（兼容 URL 编码 %3D），取不到返回 0 */
+    private int extractMonopolyProjectId(JSONObject displayInfo) {
+        if (displayInfo == null) {
+            return 0;
+        }
+        JSONObject mapDisplay = displayInfo.optJSONObject("mapDisplay");
+        if (mapDisplay == null) {
+            return 0;
+        }
+        String url = mapDisplay.optString("lockedRedirectUrl");
+        Matcher matcher = Pattern.compile("projectId(?:%3D|=)(\\d+)").matcher(url);
+        if (matcher.find()) {
+            try {
+                return Integer.parseInt(matcher.group(1));
+            }
+            catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+        return 0;
     }
 
     private int forFriendCollectEnergy(String targetUserId, long bubbleId) {

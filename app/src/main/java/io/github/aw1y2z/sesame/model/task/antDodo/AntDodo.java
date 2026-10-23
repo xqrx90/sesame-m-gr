@@ -63,6 +63,7 @@ public class AntDodo extends ModelTask {
     private SelectModelField bookMedalOptions;
     private ChoiceModelField collectToFriendType;
     private SelectModelField collectToFriendList;
+    private BooleanModelField useMaxExchangeFriendCard;  // 帮抽交换 | 用历史最多卡片（自 Sesame-GR 移植）
     private BooleanModelField giftToFriend;
     private ChoiceModelField giftToFriendBookStatusType;
     private ChoiceModelField giftToFriendBookCollectedStatusType;
@@ -89,6 +90,8 @@ public class AntDodo extends ModelTask {
         modelFields.addField(bookMedalOptions = new SelectModelField("bookMedalOptions", "图鉴勋章 | 选项", new LinkedHashSet<>(), CustomOption::getAntDodoBookMedalOptions).setDependsOn("bookMedal"));
         modelFields.addField(collectToFriendType = new ChoiceModelField("collectToFriendType", "帮抽卡片 | 动作", CollectToFriendType.NONE, CollectToFriendType.nickNames));
         modelFields.addField(collectToFriendList = new SelectModelField("collectToFriendList", "帮抽卡片 | 好友列表", new LinkedHashSet<>(), AlipayUser::getList).setDependsOn("collectToFriendType"));
+        // 自 Sesame-GR 移植：帮抽成功后，用自己持有数量最多的卡与对方互换
+        modelFields.addField(useMaxExchangeFriendCard = new BooleanModelField("useMaxExchangeFriendCard", "帮抽交换 | 用历史最多卡片", false).setDependsOn("collectToFriendType"));
         modelFields.addField(giftToFriend = new BooleanModelField("giftToFriend", "赠送卡片 | 开启", false));
         modelFields.addField(giftToFriendBookStatusType = new ChoiceModelField("giftToFriendBookStatusType", "赠送卡片 | " + "图鉴状态类型", BookStatusType.ALL, BookStatusType.nickNames).setDependsOn("giftToFriend"));
         modelFields.addField(giftToFriendBookCollectedStatusType = new ChoiceModelField("giftToFriendBookCollectedStatusType", "赠送卡片 | 图鉴收集状态", BookCollectedStatusType.ALL, BookCollectedStatusType.nickNames).setDependsOn("giftToFriend"));
@@ -634,6 +637,35 @@ public class AntDodo extends ModelTask {
                         String userName = UserIdMap.getMaskName(useId);
                         JSONObject animal = jo.getJSONObject("data").optJSONObject("animal");
                         Log.forest("帮抽卡片🦕[" + userName + "]" + getAnimalInfo(animal));
+                        if (useMaxExchangeFriendCard.getValue()) {
+                            // 自 Sesame-GR 移植：拿自己「持有数量最多」的那张卡，与刚帮抽到卡的好友互换
+                            String animalId = animal == null ? "" : animal.optString("animalId");
+                            String nameHave = animal == null ? "" : animal.optString("name");
+                            JSONObject collectDetail = jo.getJSONObject("data").optJSONObject("collectDetail");
+                            String cardInstanceId = collectDetail == null ? "" : collectDetail.optString("cardInstanceId");
+                            if (!animalId.isEmpty() && !cardInstanceId.isEmpty()) {
+                                JSONObject joQueryMyCollection = new JSONObject(AntDodoRpcCall.queryMyCollection(animalId));
+                                if (MessageUtil.checkResultCode(TAG, joQueryMyCollection)) {
+                                    JSONArray infoList = joQueryMyCollection.getJSONObject("data").optJSONArray("animalCollectionInfoList");
+                                    JSONObject info = infoList == null || infoList.length() == 0 ? null : infoList.getJSONObject(0);
+                                    JSONObject mine = info == null ? null : info.optJSONObject("animal");
+                                    JSONObject mineDetail = info == null ? null : info.optJSONObject("collectDetail");
+                                    String animalIdChoose = mine == null ? "" : mine.optString("animalId");
+                                    int countChoose = mineDetail == null ? 0 : mineDetail.optInt("count");
+                                    if (!animalIdChoose.isEmpty() && countChoose > 0) {
+                                        JSONObject joExchange = new JSONObject(AntDodoRpcCall.exchange(animalIdChoose, animalId, cardInstanceId, useId));
+                                        if (MessageUtil.checkResultCode(TAG, joExchange)) {
+                                            JSONObject exchangeData = joExchange.optJSONObject("data");
+                                            JSONObject collectDetailHave = exchangeData == null ? null : exchangeData.optJSONObject("collectDetail");
+                                            int countHave = collectDetailHave == null ? 0 : collectDetailHave.optInt("count");
+                                            Log.forest("帮抽卡换🦕用[" + mine.optString("ecosystem") + "]" + mine.optString("name")
+                                                    + "(" + countChoose + ")[" + FantasticLevel.valueOf(mine.optString("fantasticLevel")).nickName()
+                                                    + "]与[" + userName + "]交换#获得[" + nameHave + "](" + countHave + ")");
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         count--;
                     }
                 }

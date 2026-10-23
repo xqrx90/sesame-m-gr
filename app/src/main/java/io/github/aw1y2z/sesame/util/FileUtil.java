@@ -694,6 +694,16 @@ public class FileUtil {
         return ensureFileExists(errorLogFile);
     }
     
+    /**
+     * 清理历史日志。
+     * <p>
+     * 保留天数由 {@code BaseModel.backupLogDays} 控制（自 Sesame-GR 移植）：
+     * <ul>
+     *   <li>0 = 只保留当天日志，其余全删（默认，等同 Sesame-M 原行为）</li>
+     *   <li>N&gt;0 = 额外保留距今 1~N 天的非 runtime 日志；runtime 日志仍只保留当天</li>
+     * </ul>
+     * 当天日志超过 100MB 仍会被删除，交由日志框架重建。
+     */
     public static void clearLog() {
         File[] files = LOG_DIRECTORY_FILE.listFiles();
         if (files == null) {
@@ -703,13 +713,33 @@ public class FileUtil {
         if (sdf == null) {
             sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
         }
+        sdf.setLenient(false);
         String today = sdf.format(new Date());
+        long todayMillis;
+        try {
+            todayMillis = sdf.parse(today).getTime();
+        }
+        catch (Throwable t) {
+            todayMillis = System.currentTimeMillis();
+        }
+        int keepDays = getBackupLogDaysFromConfig();
         for (File file : files) {
             String name = file.getName();
+            boolean keep = false;
             if (name.endsWith(today + ".log")) {
-                if (file.length() < 104_857_600) {
-                    continue;
+                //当天日志小于100MB保留, 超过100MB删除后由日志框架重建
+                keep = file.length() < 104_857_600;
+            }
+            else if (keepDays > 0 && !name.startsWith("runtime.")) {
+                //文件名格式: {type}.yyyy-MM-dd.log, 仅保留距今 1~keepDays 天的非 runtime 日志
+                Long fileDateMillis = parseLogDateMillis(name, sdf);
+                if (fileDateMillis != null) {
+                    long diffDays = Math.round((todayMillis - fileDateMillis) / 86_400_000.0);
+                    keep = diffDays >= 1 && diffDays <= keepDays;
                 }
+            }
+            if (keep) {
+                continue;
             }
             try {
                 file.delete();
@@ -717,6 +747,37 @@ public class FileUtil {
             catch (Exception e) {
                 Log.printStackTrace(e);
             }
+        }
+    }
+
+    /**
+     * 读取「保留之前日志天数」配置，失败一律回退 0（只留当天），保证不放宽原有清理力度。
+     */
+    private static int getBackupLogDaysFromConfig() {
+        try {
+            Integer days = BaseModel.backupLogDays.getValue();
+            if (days != null && days > 0) {
+                return days;
+            }
+        }
+        catch (Throwable ignored) {
+        }
+        return 0;
+    }
+
+    /**
+     * 从 {@code {type}.yyyy-MM-dd.log} 形式的文件名解析日期毫秒值，解析失败返回 null。
+     */
+    private static Long parseLogDateMillis(String name, SimpleDateFormat sdf) {
+        if (!name.endsWith(".log") || name.length() < 15 || name.charAt(name.length() - 15) != '.') {
+            return null;
+        }
+        String dateStr = name.substring(name.length() - 14, name.length() - 4);
+        try {
+            return sdf.parse(dateStr).getTime();
+        }
+        catch (Throwable t) {
+            return null;
         }
     }
     

@@ -2,6 +2,7 @@ package io.github.aw1y2z.sesame.model.task.antOrchard;
 
 import io.github.aw1y2z.sesame.data.ConfigV2;
 import io.github.aw1y2z.sesame.entity.AlipayAntOrchardTaskList;
+import io.github.aw1y2z.sesame.entity.AlipayAntOrchardDrawTaskList;
 import io.github.aw1y2z.sesame.entity.AlipayOrchardChouChouLeTaskList;
 import io.github.aw1y2z.sesame.entity.AlipayPlantScene;
 import io.github.aw1y2z.sesame.entity.AlipayUser;
@@ -35,6 +36,7 @@ import java.util.Set;
 
 import io.github.aw1y2z.sesame.util.*;
 import io.github.aw1y2z.sesame.util.idMap.AntOrchardTaskListMap;
+import io.github.aw1y2z.sesame.util.idMap.AntOrchardDrawTaskListMap;
 import io.github.aw1y2z.sesame.util.idMap.OrchardChouChouLeTaskListMap;
 import io.github.aw1y2z.sesame.util.idMap.PlantSceneIdMap;
 import io.github.aw1y2z.sesame.util.idMap.UserIdMap;
@@ -70,6 +72,12 @@ public class AntOrchard extends ModelTask {
     private BooleanModelField assistFriend;
     private SelectModelField assistFriendList;
     private BooleanModelField orchardChouChouLe;
+    // 自 Sesame-GR 移植
+    private BooleanModelField orchardAutoHarvest;
+    private BooleanModelField orchardAutoPlant;
+    private BooleanModelField orchardDrawListTask;
+    private BooleanModelField AutoAntOrchardDrawTaskList;
+    private SelectModelField AntOrchardDrawTaskList;
     private BooleanModelField AutoOrchardChouChouLeTaskList;
     private SelectModelField OrchardChouChouLeTaskList;
     private static int fertilizerProgress = 0;
@@ -127,6 +135,12 @@ public class AntOrchard extends ModelTask {
         modelFields.addField(orchardChouChouLe = new BooleanModelField("orchardChouChouLe", "抽抽乐(阿肥寻宝记)", false));
         modelFields.addField(AutoOrchardChouChouLeTaskList = new BooleanModelField("AutoOrchardChouChouLeTaskList", "抽抽乐任务 | 自动黑名单", true).setDependsOn("orchardChouChouLe"));
         modelFields.addField(OrchardChouChouLeTaskList = new SelectModelField("OrchardChouChouLeTaskList", "抽抽乐任务 | 黑名单列表", new LinkedHashSet<>(), AlipayOrchardChouChouLeTaskList::getList).setDependsOn("AutoOrchardChouChouLeTaskList"));
+        // 以下自 Sesame-GR 移植
+        modelFields.addField(orchardAutoHarvest = new BooleanModelField("orchardAutoHarvest", "自动收果树 | 开启", false));
+        modelFields.addField(orchardAutoPlant = new BooleanModelField("orchardAutoPlant", "自动种果树 | 开启", false).setDependsOn("orchardAutoHarvest"));
+        modelFields.addField(orchardDrawListTask = new BooleanModelField("orchardDrawListTask", "农场寻宝 | 做任务换抽奖次数", false));
+        modelFields.addField(AutoAntOrchardDrawTaskList = new BooleanModelField("AutoAntOrchardDrawTaskList", "农场寻宝任务 | 自动黑名单", true).setDependsOn("orchardDrawListTask"));
+        modelFields.addField(AntOrchardDrawTaskList = new SelectModelField("AntOrchardDrawTaskList", "农场寻宝任务 | 黑名单列表", new LinkedHashSet<>(), AlipayAntOrchardDrawTaskList::getList).setDependsOn("AutoAntOrchardDrawTaskList"));
         return modelFields;
     }
 
@@ -152,6 +166,10 @@ public class AntOrchard extends ModelTask {
             //初始任务列表
             if (!Status.hasFlagToday("BlackList::initAntOrchard")) {
                 initAntOrchardTaskListMap(AutoAntOrchardTaskList.getValue(), orchardListTask.getValue(), orchardChouChouLe.getValue(), AutoOrchardChouChouLeTaskList.getValue());
+                // 农场寻宝任务名单（自 Sesame-GR 移植）
+                if (orchardDrawListTask.getValue()) {
+                    initAntOrchardDrawTaskListMap();
+                }
                 Status.flagToday("BlackList::initAntOrchard");
             }
             // 额外信息获取（每日肥料包）
@@ -171,6 +189,19 @@ public class AntOrchard extends ModelTask {
             // 好友助力
             if (assistFriend.getValue()) {
                 orchardAssistFriend();
+            }
+
+            // 自动收果树 / 自动种果树（自 Sesame-GR 移植；种树受收树的开关联动）
+            if (orchardAutoHarvest.getValue()) {
+                AntOrchardAutoHarvest.harvest(orchardAutoPlant.getValue());
+            }
+            else if (orchardAutoPlant.getValue()) {
+                AntOrchardAutoHarvest.autoPlant();
+            }
+
+            // 农场寻宝：做任务换抽奖次数（自 Sesame-GR 移植）
+            if (orchardDrawListTask.getValue()) {
+                orchardDrawListTask();
             }
 
             // 农场抽抽乐
@@ -760,6 +791,50 @@ public class AntOrchard extends ModelTask {
                 },
                 task -> taskType.equals(task.optString("taskType")) && sceneCode.equals(task.optString("sceneCode"))
                         ? task.optString("taskStatus") : null);
+    }
+
+    /**
+     * 同步「农场寻宝」任务名到 {@code AntOrchardDrawTaskListMap}，供黑名单下拉框选用。
+     * 自 Sesame-GR 移植（GR 把这段塞在 initAntOrchardTaskListMap 里，这里拆成独立方法，
+     * 避免改动 Sesame-M 既有方法签名）。
+     */
+    public static void initAntOrchardDrawTaskListMap() {
+        try {
+            AntOrchardDrawTaskListMap.load();
+            JSONObject jo = new JSONObject(AntOrchardRpcCall.orchardDrawListTask());
+            if (MessageUtil.checkResultCode(TAG, jo)) {
+                JSONArray taskInfoList = jo.optJSONArray("taskInfoList");
+                if (taskInfoList != null) {
+                    for (int i = 0; i < taskInfoList.length(); i++) {
+                        JSONObject taskInfo = taskInfoList.optJSONObject(i);
+                        JSONObject taskBaseInfo = taskInfo == null ? null : taskInfo.optJSONObject("taskBaseInfo");
+                        if (taskBaseInfo == null) {
+                            continue;
+                        }
+                        String taskName = "";
+                        String bizInfo = taskBaseInfo.optString("bizInfo");
+                        if (!bizInfo.isEmpty()) {
+                            try {
+                                taskName = new JSONObject(bizInfo).optString("title");
+                            }
+                            catch (Throwable ignored) {
+                            }
+                        }
+                        if (taskName.isEmpty()) {
+                            taskName = taskBaseInfo.optString("title");
+                        }
+                        if (!taskName.isEmpty()) {
+                            AntOrchardDrawTaskListMap.add(taskName, taskName);
+                        }
+                    }
+                }
+            }
+            AntOrchardDrawTaskListMap.save();
+            Log.record("同步任务🉑芭芭农场抽抽乐任务列表");
+        }
+        catch (Throwable t) {
+            Log.err(TAG, "initAntOrchardDrawTaskListMap err:", t);
+        }
     }
 
     public static void initAntOrchardTaskListMap(boolean AutoAntOrchardTaskList, boolean orchardListTask, boolean orchardChouChouLe, boolean AutoOrchardChouChouLeTaskList) {
@@ -1738,6 +1813,88 @@ public class AntOrchard extends ModelTask {
     /**
      * 好友助力
      */
+    // ===== 自 Sesame-GR 移植：农场抽抽乐任务 =====
+
+    /**
+     * 农场抽抽乐「做任务换抽奖次数」：查任务列表，对 TODO 的任务按剩余次数 finish + 领奖，
+     * 对 FINISHED 的任务直接领奖。
+     * <p>
+     * 与 Sesame-GR 的差异：GR 在此方法末尾还会顺带把抽奖次数抽完；Sesame-M 已有独立的
+     * 「抽抽乐(阿肥寻宝记)」开关负责抽奖，这里只做任务部分，避免同一次运行重复抽奖。
+     * 任务黑名单沿用 {@code AntOrchardDrawTaskList}。
+     */
+    private void orchardDrawListTask() {
+        try {
+            JSONObject jo = new JSONObject(AntOrchardRpcCall.orchardDrawListTask());
+            if (!MessageUtil.checkSuccess(TAG, jo)) {
+                return;
+            }
+            JSONArray taskInfoList = jo.optJSONArray("taskInfoList");
+            if (taskInfoList == null) {
+                return;
+            }
+            Set<String> blackList = AntOrchardDrawTaskList.getValue();
+            for (int i = 0; i < taskInfoList.length(); i++) {
+                JSONObject taskInfo = taskInfoList.optJSONObject(i);
+                if (taskInfo == null) {
+                    continue;
+                }
+                JSONObject taskBaseInfo = taskInfo.optJSONObject("taskBaseInfo");
+                if (taskBaseInfo == null) {
+                    continue;
+                }
+                String taskName = taskBaseInfo.optString("title");
+                String bizInfo = taskBaseInfo.optString("bizInfo");
+                if (!bizInfo.isEmpty()) {
+                    try {
+                        JSONObject biz = new JSONObject(bizInfo);
+                        String t = biz.optString("title");
+                        if (!t.isEmpty()) {
+                            taskName = t;
+                        }
+                    }
+                    catch (Throwable ignored) {
+                    }
+                }
+                String taskSceneCode = taskBaseInfo.optString("sceneCode");
+                String taskStatus = taskBaseInfo.optString("taskStatus");
+                String taskType = taskBaseInfo.optString("taskType");
+                JSONObject taskRights = taskInfo.optJSONObject("taskRights");
+                int rightsTimes = taskRights == null ? 0 : taskRights.optInt("rightsTimes");
+                int rightsTimesLimit = taskRights == null ? 0 : taskRights.optInt("rightsTimesLimit");
+                if ("RECEIVED".equals(taskStatus)) {
+                    continue;
+                }
+                boolean blacklisted = blackList != null && blackList.contains(taskName);
+                if ("TODO".equals(taskStatus) && !blacklisted) {
+                    for (int j = 0; j < (rightsTimesLimit - rightsTimes); j++) {
+                        JSONObject finishJo = new JSONObject(AntOrchardRpcCall.finishTaskantorchard(taskType, taskSceneCode));
+                        if (AutoAntOrchardDrawTaskList.getValue()) {
+                            MessageUtil.checkResultCodeAndMarkTaskBlackList("AntOrchardDrawTaskList", taskName, finishJo);
+                        }
+                        if (MessageUtil.checkSuccess(TAG, finishJo)) {
+                            Log.farm("农场寻宝🧾完成[" + taskName + "]");
+                        }
+                        JSONObject awardJo = new JSONObject(AntOrchardRpcCall.receiveDrawTaskAwardantorchard(taskSceneCode, taskType));
+                        if (MessageUtil.checkSuccess(TAG, awardJo)) {
+                            Log.farm("农场寻宝🎖️领取[" + taskName + "]获得抽奖*" + awardJo.optInt("incAwardCount"));
+                        }
+                        TimeUtil.sleep(1000);
+                    }
+                }
+                else if ("FINISHED".equals(taskStatus)) {
+                    JSONObject awardJo = new JSONObject(AntOrchardRpcCall.receiveDrawTaskAwardantorchard(taskSceneCode, taskType));
+                    if (MessageUtil.checkSuccess(TAG, awardJo)) {
+                        Log.farm("农场寻宝🎖️领取[" + taskName + "]获得抽奖*" + awardJo.optInt("incAwardCount"));
+                    }
+                }
+            }
+        }
+        catch (Throwable t) {
+            Log.err(TAG, "orchardDrawListTask err:", t);
+        }
+    }
+
     private void orchardAssistFriend() {
         if (Status.hasFlagToday("orchardAssistLimit")) {
             return;

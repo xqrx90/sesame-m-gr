@@ -76,6 +76,7 @@ public class AntOcean extends ModelTask {
     private BooleanModelField replica;
     private BooleanModelField antfishEnable;  // 开启摸鱼功能
     private BooleanModelField antfishAutoTask;  // 自动完成任务获得次数
+    private BooleanModelField exchangeProject;  // 海洋摸鱼 | 兑换科学证书（自 Sesame-GR 移植）
 
 
     @Override
@@ -93,6 +94,8 @@ public class AntOcean extends ModelTask {
         modelFields.addField(antfishAutoTask = new BooleanModelField("antfishAutoTask", "海洋摸鱼 | 摸鱼任务", false).setDependsOn("antfishEnable"));
         modelFields.addField(AutoAntOceanFishBlackList = new BooleanModelField("AutoAntOceanFishBlackList", "海洋摸鱼 | 自动黑名单", true).setDependsOn("antfishAutoTask"));
         modelFields.addField(AntOceanFishBlackList = new SelectModelField("AntOceanFishBlackList", "摸鱼任务 | 黑名单列表", new LinkedHashSet<>(), AlipayAntOceanFishBlackList::getList).setDependsOn("AutoAntOceanFishBlackList"));
+        // 自 Sesame-GR 移植
+        modelFields.addField(exchangeProject = new BooleanModelField("exchangeProject", "海洋摸鱼 | 兑换科学证书", false).setDependsOn("antfishEnable"));
         return modelFields;
     }
 
@@ -1259,9 +1262,63 @@ public class AntOcean extends ModelTask {
             // 4. 执行摸鱼
             touchfish();
 
+            // 5. 兑换科学证书（自 Sesame-GR 移植）
+            if (exchangeProject.getValue()) {
+                exchangeProject();
+            }
+
 
         } catch (Throwable t) {
             Log.err(TAG, "antfishRun err:", t);
+        }
+    }
+
+    /**
+     * 海洋摸鱼「兑换科学证书」：查 {@code project.phaseList}，对每个 {@code exchangeStatus=canExchange}
+     * 的段位兑换证书，{@code levelNotEnough} 的跳过。
+     * <p>
+     * 自 Sesame-GR 移植；相比 GR 原版补了 {@code properties} 的空判（GR 直接取值，响应缺字段时 NPE）。
+     */
+    private void exchangeProject() {
+        try {
+            JSONObject jo = new JSONObject(AntOceanRpcCall.queryProjectDetail());
+            if (!MessageUtil.checkResultCode(TAG, jo)) {
+                Log.record("海洋摸鱼查询证书状态失败");
+                return;
+            }
+            JSONObject project = jo.optJSONObject("project");
+            if (project == null) {
+                return;
+            }
+            JSONArray phaseList = project.optJSONArray("phaseList");
+            if (phaseList == null) {
+                return;
+            }
+            for (int i = 0; i < phaseList.length(); i++) {
+                JSONObject phase = phaseList.optJSONObject(i);
+                if (phase == null) {
+                    continue;
+                }
+                if (!"canExchange".equals(phase.optString("exchangeStatus"))) {
+                    continue;
+                }
+                JSONObject exchangeJo = new JSONObject(AntOceanRpcCall.exchangeProject());
+                if (!MessageUtil.checkResultCode(TAG, exchangeJo)) {
+                    Log.record("海洋摸鱼证书兑换失败");
+                    continue;
+                }
+                JSONObject properties = exchangeJo.optJSONObject("properties");
+                if (properties == null) {
+                    continue;
+                }
+                Log.forest("海洋摸鱼🐟兑换证书#" + properties.optString("region")
+                        + properties.optString("releasePoint") + properties.optString("protectContent")
+                        + "(" + properties.optString("certificateName") + ")");
+                TimeUtil.sleep(500);
+            }
+        }
+        catch (Throwable t) {
+            Log.err(TAG, "exchangeProject err:", t);
         }
     }
 

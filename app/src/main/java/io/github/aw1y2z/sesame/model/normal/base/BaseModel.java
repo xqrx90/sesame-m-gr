@@ -47,6 +47,9 @@ public class BaseModel extends Model {
     private static final IntegerModelField.MultiplyIntegerModelField waitWhenException = new IntegerModelField.MultiplyIntegerModelField("waitWhenException", "异常等待时间(分钟)", 60, 0, 24 * 60, 60_000);
     @Getter
     public static final IntegerModelField backupConfigDays = new IntegerModelField("backupConfigDays", "按天和修改备份配置保存数(滚动覆盖)", 5);
+    /** 自 Sesame-GR 移植：历史日志保留天数。0 = 只留当天（等同 Sesame-M 原行为）。 */
+    @Getter
+    public static final IntegerModelField backupLogDays = new IntegerModelField("backupLogDays", "保留之前日志天数(除runtime,0只留当天)", 0);
     @Getter
     private static final SelectAndCountModelField rpcRequestList = new SelectAndCountModelField("rpcRequestList", "RPC请求列表及每日执行数(慎用)", new LinkedHashMap<>(), AlipayrpcRequest::getList, "请填写每日执行次数", 1, 100);
     @Getter
@@ -87,6 +90,7 @@ public class BaseModel extends Model {
         modelFields.addField(timedTaskModel);
         modelFields.addField(timeoutRestart);
         modelFields.addField(backupConfigDays);
+        modelFields.addField(backupLogDays);
         modelFields.addField(rpcRequestList);
         modelFields.addField(rpcRequestTaskList);
         return modelFields;
