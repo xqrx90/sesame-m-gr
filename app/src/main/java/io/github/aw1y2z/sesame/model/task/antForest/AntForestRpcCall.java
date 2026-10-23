@@ -483,10 +483,16 @@ public class AntForestRpcCall {
         return ApplicationHook.requestString("alipay.antisle.monopoly.h5.eventConfirm", monopolyPayload(extra));
     }
     
-    /* 新版保护地任务列表 */
+    /**
+     * 新版保护地任务列表。
+     * <p>{@code regionCode} 必须放进 {@code extend} 里，服务端才按区域返回完整任务列表；
+     * 放在顶层时服务端读不到区域，只会返回残缺（默认区域）的任务，表现为「任务列表不全」。
+     * <p>对齐上游 Sesame-M 提交 6c47655「修复新版保护地任务列表不全」；GR 上游此处仍是旧写法
+     * （{@code lazyimmortal} 版 {@code listMonopolyTasks}），故以 M 的修复为准。
+     */
     public static String listMonopolyTasks(String regionCode, String sceneCode) {
         return ApplicationHook.requestString("com.alipay.antieptask.listTaskopengreen",
-                "[{\"regionCode\":\"" + regionCode + "\",\"sceneCode\":\"" + sceneCode + "\",\"source\":\"ANTFOREST\","
+                "[{\"extend\":{\"regionCode\":\"" + regionCode + "\"},\"sceneCode\":\"" + sceneCode + "\",\"source\":\"ANTFOREST\","
                         + "\"requestType\":\"RPC\",\"zoneId\":\"Asia/Shanghai\",\"uniqueId\":\"" + RandomUtil.getRandomString(16) + "\"}]");
     }
     

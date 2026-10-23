@@ -169,3 +169,64 @@ Kotlin 无分号导致 `package` 吞掉整个文件、`void`/基本类型被当�
 
 第二轮已在**静态可判定范围内做到零错误**：跨类调用、参数、方法名、import、注册表、字段联动
 全部闭合。剩余风险集中在「运行时宿主接口是否如预期」这一类，只能靠实机验证。
+
+## 十二、上游同步记录（2026-10-23）
+
+### 12.1 两仓最新状态核查
+
+用 GitHub API 直接查远端，避免浅克隆本地 log 的截断误判：
+
+| 仓库 | 远端最新提交 | 时间 | 与本仓基线的关系 |
+| --- | --- | --- | --- |
+| `Dragon813/Sesame-GR`（origin/main） | `fe0b5650` | 2026-10-20 | **无新提交**，本仓已是该版本 |
+| `aw1y2z/Sesame-M`（origin/MIUIX-api102） | `6c476554` | 2026-10-22 | 新增 **1 个**提交，本仓基线为 `fdf58306`（10-21） |
+
+即：本轮只有 Sesame-M 需要同步，GR 侧无更新。
+
+### 12.2 上游提交 `6c476554` 逐行审阅
+
+提交信息：**修复新版保护地任务列表不全**，改动 2 文件 4 行。
+
+| 改动点 | 内容 | 审阅结论 |
+| --- | --- | --- |
+| `AntForestRpcCall.listMonopolyTasks` | `regionCode` 从顶层移入 `extend` 对象 | **认可**。MTOP 的业务参数走 `extend` 是本站点一贯约定——GR 自己的 `listTaskopengreen()`（青春特权）也是 `{"extend":{"businessSource":...,"osType":...,"version":...}}`。放顶层时服务端读不到区域，只回残缺列表 |
+| `AntForestV2` 同步调用点 | `if (monopolyTasks.getValue() && MonopolyTaskListMap.getMap().isEmpty())` → `if (monopolyTasks.getValue())` | **认可，但确认过代价**。见 12.3 |
+
+### 12.3 对「每轮都同步」的副作用核查
+
+去掉 `isEmpty()` 判断后，`initMonopolyTaskListMap()` 每轮都会执行，代价逐项核过：
+
+| 潜在顾虑 | 核查结果 |
+| --- | --- |
+| 是否在紧循环里？ | **不是**。`run()`（AntForestV2:452）是单次直线方法，无 `while`；每个模型周期只进一次 |
+| 每轮多几次 RPC？ | **2 次**（`queryMonopolyEntryInfo` 取 regionCode + `listTaskopengreen` 取任务）。同轮 `monopolyTask()` 本来就要打这两个接口，占比可忽略 |
+| 写盘开销？ | `StringMapStore.save()` 每轮整份覆盖写一次。次数等同于模型周期（非秒级），可接受 |
+| 名单会不会被清空？ | **不会**。`add()` 是 `ConcurrentHashMap.put` 按键去重，`load()` 先 clear 再从文件整份载入，用户已产生的名单不会丢 |
+| UI 读到瞬时空表？ | 理论窗口存在（`load()` 的 clear→putAll 之间），但只在配置页渲染瞬间，微秒级，实际不可见 |
+
+**结论：改动本身无害，收益明确**——`listMonopolyTasks` 有两个消费方，除了黑名单候选
+（`initMonopolyTaskListMap`），**真正的任务执行循环 `monopolyTask()` 也调它**。
+所以这个修复同时治好了「保护地任务少做」，不只是候选列表少几项。
+
+### 12.4 同步后的差异基线
+
+同步完成后，把 M 新版整个源码树导出，与本仓做 `diff -rq` 全量比对：
+
+```
+差异 36 处 = 23 个已修改文件（本仓移植改动） + 13 个仅本仓存在的文件（移植新增）
+无「仅 M 有」的文件 → 上游一个文件都没漏
+```
+
+### 12.5 同步后重跑全部静态检查
+
+| 检查项 | 结果 |
+| --- | --- |
+| 同签名方法重复定义 | 0 |
+| 跨类调用目标不存在 | 0 |
+| 参数数量不匹配 | 0 |
+| 漏 import / 全限定类写错 | 0 |
+| JSON 硬取未在 try 内 | 0 |
+| 资源未关闭 | 0 |
+| switch case 穿透 | 0 |
+| `setDependsOn` 断链 | 0 |
+| 空 catch | 33（全部为 hook 层 `catch (Throwable ignored) {}`，有意静默） |
