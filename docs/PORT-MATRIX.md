@@ -12,7 +12,9 @@
 | **废弃** | GR 自身已注释/已下线，M 无对应机制，不移植 |
 | **增强** | 移植到 M 既有方法上，但默认值取「保持 M 现状」，行为零变化 |
 
-累计：GR 独有开关 51 项 → 移植 22 · 增强 1 · 复用 22 · 废弃 6
+累计：GR 独有开关 51 项 → 移植 20 · 增强 1 · 复用 23 · 废弃 6 · 未移植 1
+
+> 执行状态：**已全部落地**（提交 `8e42843`）。实现与初判的差异已直接回写到下表（#38、#39）。
 
 ---
 
@@ -72,8 +74,8 @@
 | 35 | `combineAnimalPiece` | 合成动物碎片 | **移植** | M 无；RPC `alipay.antforest.forest.h5.combineAnimalPiece` 缺失，需补 |
 | 36 | `newMonopolyExchangeTree` | 新版保护地 \| 领取证书 | **移植** | M 有 9 个 monopoly RPC，独缺 `newMonopolyExchangeTree`，需补 |
 | 37 | `preNewMonopolyExchangeTree` | 新版保护地 \| 提前兑换未开始保护地证书 | **移植** | 是 #36 的从属开关，`setDependsOn("newMonopolyExchangeTree")` |
-| 38 | `switchNewMonopolyMap` | 新版保护地 \| 切换最新可保护地图 | **移植** | M 缺 `queryMonopolyMapPage` + `switchMonopolyMap` 两 RPC，需补 |
-| 39 | `partnerteamWaterMax` | 组队合种浇水上限（0不限) | **移植** | M 的 `partnerteamWaterNum` 是「每日目标」，无累计上限概念 |
+| 38 | `switchNewMonopolyMap` | 新版保护地 \| 切换最新可保护地图 | **未移植** | GR 该逻辑内嵌在 `monopoly()` 主体里约百行的联级判定（依赖局部变量 `currentRegionMapList/currentRegionCode/ownedCreatureCount/creatureList`），照搬等于重构 M 的 monopoly 方法主体，违背「不改 M 既有语句」闸门。若后续要做，需先补 `switchMonopolyMap` RPC 并把判定抽成独立方法 |
+| 39 | `partnerteamWaterMax` | 组队合种浇水上限（0不限) | **复用** | M 的 `teamCooperateWater()` 已按「每日目标 g 数」(`partnerteamWaterNum`) + `Status` 当日计数控制；GR 是同一功能的另一套写法（总能量上限），不并存 |
 
 ## E. AntFarm（蚂蚁庄园 / 爱心鸡结号）— 4 项
 
