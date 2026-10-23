@@ -571,6 +571,11 @@ public class FileUtil {
         return getFile(MAIN_DIRECTORY_FILE, "AntOrchardTask.json");
     }
 
+    /** 果园抽奖任务清单（从 Sesame-GR 移植的新增缓存） */
+    public static File getAntOrchardDrawTaskListMapFile() {
+        return getFile(MAIN_DIRECTORY_FILE, "AntOrchardDrawTask.json");
+    }
+
     public static File getOrchardChouChouLeTaskListMapFile() {
         return getFile(MAIN_DIRECTORY_FILE, "OrchardChouChouLeTask.json");
     }

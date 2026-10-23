@@ -207,6 +207,22 @@ public class AntForestRpcCall {
                 "[{\"ignoreLimit\":false,\"requestType\":\"RPC\",\"sceneCode\":\"ANTFOREST_VITALITY_TASK\",\"source\":\""
                         + source + "\",\"taskType\":\"" + taskType + "\"}]");
     }
+
+    /**
+     * 学生签到（青春特权领红包）签到状态查询。移植自 Sesame-GR。
+     */
+    public static String studentQqueryCheckInModel() {
+        String args = "[{\"chInfo\":\"ch_appcollect__chsub_my-recentlyUsed\",\"skipTaskModule\":false}]";
+        return ApplicationHook.requestString("alipay.membertangram.biz.rpc.student.queryCheckInModel", args);
+    }
+
+    /**
+     * 学生签到（青春特权领红包）执行签到。移植自 Sesame-GR。
+     */
+    public static String studentCheckin() {
+        String args = "[{\"source\":\"chInfo_ch_appcenter__chsub_9patch\"}]";
+        return ApplicationHook.requestString("alipay.membertangram.biz.rpc.student.checkIn", args);
+    }
     
     public static String queryEnergyRainHome() {
         return ApplicationHook.requestString("alipay.antforest.forest.h5.queryEnergyRainHome", "[{\"version\":\"" + VERSION + "\"}]");
