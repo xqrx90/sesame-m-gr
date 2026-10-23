@@ -163,6 +163,16 @@ Sesame-GR 的构建脚本里有 `normal` / `compatible` 两个 flavor。很多�
 - `versionCode = 1000000 + gitCommitCount`，保证覆盖升级不回退
 - 调试包使用仓库内固定 keystore（`keystore/debug.keystore`）签名，CI 每次产出的包可互相覆盖升级
 
+### 下载
+
+| 渠道 | 地址 | 说明 |
+| --- | --- | --- |
+| 稳定版 | [Releases](https://github.com/xqrx90/sesame-m-gr/releases) | 按 tag 发布的构建 |
+| 最新调试包 | [debug-latest](https://github.com/xqrx90/sesame-m-gr/releases/tag/debug-latest) | 跟随 `main` 最新提交，Pre-release |
+
+每个 APK 旁都附有同名 `.sha256` 校验文件，下载后可直接对比。
+要求 **Android 8.0（API 26）** 及以上；首次安装需在 LSPosed 里勾选作用域「支付宝」。
+
 发版：打 tag → GitHub Release 发布 → workflow 自动构建并上传 APK；也可用 `workflow_dispatch` 手动出
 `debug-latest` 预发布包。CI **只发 Release，不使用 artifact**（避免累积占满 Actions 配额）。
 
