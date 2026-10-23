@@ -37,6 +37,10 @@ android {
         logger.warn("Sesame-MGR: 仓库是浅克隆，versionCode 只能取到 ${gitCommitCount}；发版请用完整克隆")
     }
     def buildTime = new Date().format("yyyy-MM-dd HH:mm:ss", TimeZone.getTimeZone("Asia/Shanghai"))
+    // 构建序号：CI 每次构建递增（0.0.1 / 0.0.2 …），用于让「同一提交的多次构建」也能区分
+    def buildNumberText = project.getProperties().get("buildNumber")
+    def buildNumber = (buildNumberText != null && buildNumberText.toString().isInteger())
+            ? buildNumberText.toString().toInteger() : 0
 
     compileSdk 37
     namespace 'io.github.aw1y2z.sesame'
@@ -47,9 +51,11 @@ android {
         minSdk 26
         //noinspection ExpiredTargetSdkVersion
         targetSdk 34
-        // 基址固定 + commit 数递增：保证 versionCode 单调递增（可覆盖安装），
-        // 且不会像纯 commit 数那样在新建仓库时退化成 1
-        versionCode 1000000 + gitCommitCount
+        // versionCode = 固定基址 + commit 数 × 1000 + 构建序号(%1000)
+        //  · 基址固定 → 新建仓库也不会退化成 1
+        //  · commit 数 × 1000 → 跨提交必增，保证可覆盖安装
+        //  · 构建序号 → 同一提交多次构建（0.0.1/0.0.2…）也能区分，不会卡在同一个 code
+        versionCode 1000000 + gitCommitCount * 1000 + (buildNumber % 1000)
         versionName version
 
         buildConfigField "String", "GIT_COMMIT_HASH", "\"${gitCommitHash}\""
