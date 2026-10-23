@@ -1,0 +1,146 @@
+apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.plugin.compose'
+
+android {
+    def version = project.getProperties().get("version")
+    if (version == null || "unspecified".equalsIgnoreCase(version)) {
+        // 默认版本号；正式发布时由 CI 通过 -Pversion=<tag> 覆盖
+        version = "1.0.0"
+    }
+    project.ext.appVersion = version
+    // 取 git 信息：用 providers.exec 而不是 '.execute()'——
+    // 前者把输出登记为配置输入（commit 变了配置缓存才会失效），且退出码可判；
+    // '.execute()' 既不进配置缓存，失败时还只会静默拿到空串。
+    def gitOutput = { List<String> args ->
+        try {
+            def exec = providers.exec {
+                commandLine((['git'] + args) as String[])
+                ignoreExitValue = true
+            }
+            if (exec.result.get().exitValue != 0) {
+                return null
+            }
+            def out = exec.standardOutput.asText.get().trim()
+            return out.isEmpty() ? null : out
+        } catch (Exception ignored) {
+            return null
+        }
+    }
+    def gitCommitHash = gitOutput(['rev-parse', '--short', 'HEAD']) ?: "unknown"
+    def gitBranchName = gitOutput(['rev-parse', '--abbrev-ref', 'HEAD']) ?: "unknown"
+    def gitCommitCountText = gitOutput(['rev-list', '--count', 'HEAD'])
+    def gitCommitCount = (gitCommitCountText != null && gitCommitCountText.isInteger())
+            ? gitCommitCountText.toInteger() : 1
+    // 浅克隆里 rev-list --count 只数到浅层边界（通常就是 1），versionCode 会退化成 1。
+    // 明确告警：两个 versionCode 相同的包无法覆盖安装，比静默降级更难排查。
+    if (gitCommitCount <= 1 && "true".equalsIgnoreCase(gitOutput(['rev-parse', '--is-shallow-repository']))) {
+        logger.warn("Sesame-MGR: 仓库是浅克隆，versionCode 只能取到 ${gitCommitCount}；发版请用完整克隆")
+    }
+    def buildTime = new Date().format("yyyy-MM-dd HH:mm:ss", TimeZone.getTimeZone("Asia/Shanghai"))
+
+    compileSdk 37
+    namespace 'io.github.aw1y2z.sesame'
+    defaultConfig {
+        // 独立 applicationId：可与 Sesame-M / Sesame-GR 三版共存
+        // 注意：改这里必须同步改 hook/ApplicationHook.java 的 MODULE_PACKAGE_NAME 与广播 action
+        applicationId "io.github.xqrx90.sesame.mgr"
+        minSdk 26
+        //noinspection ExpiredTargetSdkVersion
+        targetSdk 34
+        // 基址固定 + commit 数递增：保证 versionCode 单调递增（可覆盖安装），
+        // 且不会像纯 commit 数那样在新建仓库时退化成 1
+        versionCode 1000000 + gitCommitCount
+        versionName version
+
+        buildConfigField "String", "GIT_COMMIT_HASH", "\"${gitCommitHash}\""
+        buildConfigField "String", "GIT_BRANCH_NAME", "\"${gitBranchName}\""
+        buildConfigField "String", "BUILD_TIME", "\"${buildTime}\""
+    }
+    buildFeatures {
+        buildConfig = true // 显式启用 BuildConfig
+        compose = true
+    }
+    ext {
+        applicationName = "Sesame-MGR"
+        applicationType = "Normal"
+    }
+    flavorDimensions.add("default")
+    productFlavors {
+        normal {
+            dimension "default"
+            ext.applicationType = "Normal"
+        }
+    }
+    // 固定调试签名：keystore/debug.keystore 是公开的调试密钥（密码固定 android，
+    // 与 Android SDK 自带的 debug.keystore 同性质，不含任何私密信息）。
+    // 之所以要固定，是因为 CI 每次运行都是全新环境，若用 AGP 自动生成的随机
+    // debug 密钥，各版本签名不一致 → 无法覆盖安装，只能卸载重装。
+    signingConfigs {
+        mgrdebug {
+            storeFile rootProject.file('keystore/debug.keystore')
+            storeType 'PKCS12'
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.mgrdebug
+        }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    // 本项目不含任何原生库（无 jniLibs / 无 .so），ABI 拆分只会产出多个内容相同的
+    // APK，因此不启用 splits，直接出单一全架构包。
+    packaging {
+        resources {
+            merges += "META-INF/xposed/**"
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+androidComponents {
+    onVariants(selector().withBuildType('release')) { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set("Sesame-MGR-Normal-${project.appVersion}.apk")
+        }
+    }
+    onVariants(selector().withBuildType('debug')) { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set("Sesame-MGR-Debug-${project.appVersion}.apk")
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.8.0'
+    compileOnly 'io.github.libxposed:api:102.0.0'
+    implementation 'io.github.libxposed:service:102.0.0'
+    compileOnly group: 'org.projectlombok', name: 'lombok', version: '1.18.48'
+    annotationProcessor group: 'org.projectlombok', name: 'lombok', version: '1.18.48'
+    implementation 'com.elvishew:xlog:1.11.1'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    implementation group: 'com.fasterxml.jackson.core', name: 'jackson-core', version: '2.22.3'
+    implementation group: 'com.fasterxml.jackson.core', name: 'jackson-databind', version: '2.22.3'
+    // annotations 走独立版本线：只有 2.22，没有 2.22.3，勿与 core/databind 对齐
+    implementation group: 'com.fasterxml.jackson.core', name: 'jackson-annotations', version: '2.22'
+
+    // NanoHTTPD 核心依赖（最新稳定版）
+    implementation 'org.nanohttpd:nanohttpd:2.3.1'
+
+    // Kotlin + Compose（miuix UI 重构基础）
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:2.4.20"
+    implementation "androidx.activity:activity-compose:1.13.0"
+    implementation "top.yukonga.miuix.kmp:miuix-ui:0.9.4"
+    implementation "top.yukonga.miuix.kmp:miuix-preference:0.9.4"
+    implementation "androidx.compose.material:material-icons-extended:1.7.8"
+}

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="app_name">Sesame-MGR</string>
+    <string name="disable">Disable</string>
+    <string name="loading">Loading</string>
+    <string name="activated">Activated</string>
+    <string name="year">Year</string>
+    <string name="month">Month</string>
+    <string name="day">Day</string>
+    <string name="collected">Collected</string>
+    <string name="helped">Helped</string>
+    <string name="watered">Watered</string>
+    <string name="wateredcount">Wateredcount</string>
+    <string name="wateringcount">Wateringcount</string>
+    <string name="module_description" translatable="false">支付宝自动脚本模块，仅供学习交流</string>
+</resources>

@@ -1,0 +1,261 @@
+package io.github.aw1y2z.sesame.util;
+
+import android.app.*;
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.BitmapFactory;
+import android.net.Uri;
+import android.os.Build;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import lombok.Getter;
+import io.github.aw1y2z.sesame.data.RuntimeInfo;
+
+public class NotificationUtil {
+    private static Context context;
+    private static final int NOTIFICATION_ID = 99;
+    private static final String CHANNEL_ID = "io.github.xqrx90.sesame.mgr.ANTFOREST_NOTIFY_CHANNEL";
+    private static NotificationManager mNotifyManager;
+    private static Notification.Builder builder;
+
+    @Getter
+    private static volatile long lastNoticeTime = 0;
+    private static String titleText = "Sesame-MGR";
+    private static String contentText = "";
+    /** 活跃任务计数，>0 表示有异步任务仍在执行。由 ModelTask 拿到执行槽后 / finally 里增减 */
+    private static final AtomicInteger runningCount = new AtomicInteger(0);
+    /** 正在执行中的模块任务名（如「森林」「庄园」），用于状态栏展示当前在跑什么 */
+    private static final Set<String> runningTasks = ConcurrentHashMap.newKeySet();
+
+    /**
+     * 新一轮开始：清零本轮收取能量。由 {@code ApplicationHook.startMainTask} 在起跳成功时调用。
+     * <p>不能用 runningCount==0 判定：模块各自拿执行槽、依次跑，模块之间该值会短暂回到 0。
+     */
+    public static void startRound() {
+        Statistics.resetRoundCollected();
+    }
+
+    public static void trackTaskStart(String name) {
+        if (!StringUtil.isEmpty(name)) {
+            runningTasks.add(name);
+        }
+        runningCount.incrementAndGet();
+        updateRunningText();
+    }
+
+    public static void trackTaskEnd(String name) {
+        // 不再有实例锁串行化，增减来自不同线程 ⇒ 原子操作
+        if (runningCount.decrementAndGet() < 0) {
+            runningCount.set(0);
+        }
+        if (!StringUtil.isEmpty(name)) {
+            runningTasks.remove(name);
+        }
+        updateRunningText();
+    }
+
+    /**
+     * 执行中刷新通知正文：列出当前正在跑的模块任务；全部结束时交由「上次执行」文案。
+     */
+    private static void updateRunningText() {
+        long now = System.currentTimeMillis();
+        if (runningTasks.isEmpty()) {
+            if (runningCount.get() == 0) {
+                updateLastExecText();
+            }
+            return;
+        }
+        contentText = "执行中：" + String.join(" / ", runningTasks);
+        lastNoticeTime = now;
+        sendText();
+    }
+
+    public static int getRunningCount() {
+        return runningCount.get();
+    }
+
+    public static void start(Context context) {
+        try {
+            NotificationUtil.context = context;
+            NotificationUtil.stop();
+            titleText = "Sesame-MGR";
+            contentText = "启动中";
+            mNotifyManager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            Intent it = new Intent(Intent.ACTION_VIEW);
+            it.setData(Uri.parse("alipays://platformapi/startapp?appId="));
+            PendingIntent pi = PendingIntent.getActivity(context, 0, it,
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel notificationChannel = new NotificationChannel(CHANNEL_ID, "芝麻粒能量提醒",
+                        NotificationManager.IMPORTANCE_LOW);
+                notificationChannel.enableLights(false);
+                notificationChannel.enableVibration(false);
+                notificationChannel.setShowBadge(false);
+                mNotifyManager.createNotificationChannel(notificationChannel);
+                builder = new Notification.Builder(context, CHANNEL_ID);
+            } else {
+                builder = new Notification.Builder(context).setPriority(Notification.PRIORITY_LOW);
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                builder.setCategory(Notification.CATEGORY_NAVIGATION);
+            }
+            builder
+                    .setSmallIcon(android.R.drawable.sym_def_app_icon)
+                    .setLargeIcon(BitmapFactory.decodeResource(context.getResources(), android.R.drawable.sym_def_app_icon))
+                    .setSubText("芝麻粒")
+                    .setAutoCancel(false)
+                    .setContentIntent(pi);
+            if (io.github.aw1y2z.sesame.data.AppConfig.INSTANCE.getEnableOnGoing()) {
+                builder.setOngoing(true);
+            }
+            // 先把标题/正文/展开区填上：否则重载后不跑任务时，状态栏只剩一个没有文字的空通知
+            // （正常路径随后会被 setRunning/updateLastExecText 覆盖，这里只是保证不会空）
+            applyText();
+            Notification mNotification = builder.build();
+            if (context instanceof Service) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    mNotifyManager.notify(NOTIFICATION_ID, mNotification);
+                } else {
+                    ((Service) context).startForeground(NOTIFICATION_ID, mNotification);
+                }
+            } else {
+                mNotifyManager.notify(NOTIFICATION_ID, mNotification);
+            }
+        } catch (Exception e) {
+            Log.printStackTrace(e);
+        }
+    }
+
+    public static void stop() {
+        try {
+            if (context instanceof Service) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    ((Service) context).stopForeground(Service.STOP_FOREGROUND_REMOVE);
+                } else {
+                    ((Service) context).stopForeground(true);
+                }
+            } else {
+                if (mNotifyManager != null) {
+                    mNotifyManager.cancel(NOTIFICATION_ID);
+                } else if (context != null) {
+                    NotificationManager systemService = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+                    if (systemService != null) {
+                        systemService.cancel(NOTIFICATION_ID);
+                    }
+                }
+            }
+            mNotifyManager = null;
+        } catch (Exception e) {
+            Log.printStackTrace(e);
+        }
+    }
+
+    public static void updateStatusText(String status) {
+        try {
+            long forestPauseTime = RuntimeInfo.getInstance().getLong(RuntimeInfo.RuntimeInfoKey.ForestPauseTime);
+            if (forestPauseTime > System.currentTimeMillis()) {
+                status = "触发异常，等待至" + TimeUtil.getCommonDate(forestPauseTime);
+            }
+            contentText = status;
+            lastNoticeTime = System.currentTimeMillis();
+            sendText();
+        } catch (Exception e) {
+            Log.printStackTrace(e);
+        }
+    }
+
+    /** 下次执行时间，由 execDelayedHandler 设置，updateLastExecText 时一并写入 */
+    private static volatile long nextExecTime = 0;
+
+    public static void setNextExecTime(long nextExecTime) {
+        NotificationUtil.nextExecTime = nextExecTime;
+    }
+
+    /**
+     * 所有任务完成时调用：更新「上次执行」时间，并写入「下次执行」时间。
+     * 由 ModelTask.finally 中 runningCount == 0 时统一触发。
+     */
+    public static void updateLastExecText() {
+        try {
+            long now = System.currentTimeMillis();
+            String lastPart = "上次执行  " + TimeUtil.getTimeStr(now);
+            if (nextExecTime > 0) {
+                lastPart += "  下次执行 " + TimeUtil.getTimeStr(nextExecTime);
+                nextExecTime = 0;
+            }
+            contentText = lastPart;
+            lastNoticeTime = now;
+            sendText();
+        } catch (Exception e) {
+            Log.printStackTrace(e);
+        }
+    }
+
+    /**
+     * 任务运行中持续刷新通知，防止系统因「长时间无更新」将通知折叠/隐藏。
+     * 每次调用只更新 lastNoticeTime，不改变文本内容。
+     */
+    public static void setRunning() {
+        try {
+            lastNoticeTime = System.currentTimeMillis();
+            sendText();
+        } catch (Exception e) {
+            Log.printStackTrace(e);
+        }
+    }
+
+    /**
+     * 展开区里的完整能量行：本轮 / 本日收取能量。
+     */
+    private static String energyText() {
+        return "本轮收取能量 " + Statistics.getRoundCollected() + "g"
+                + "  本日收取能量 " + Statistics.getData(Statistics.TimeType.DAY, Statistics.DataType.COLLECTED) + "g";
+    }
+
+    /** 标题行上的精简能量：折叠态免长按可见，只放本轮（本日在展开区）；正文留给执行状态/告警 */
+    private static String titleWithEnergy() {
+        return titleText + "｜本轮" + Statistics.getRoundCollected() + "g";
+    }
+
+    /** 把标题/正文/展开区样式应用到 builder（不发通知） */
+    private static void applyText() {
+        builder.setContentTitle(titleWithEnergy());
+        if (!StringUtil.isEmpty(contentText)) {
+            builder.setContentText(contentText);
+        }
+        String bigText = StringUtil.isEmpty(contentText)
+                ? energyText()
+                : contentText + "\n" + energyText();
+        builder.setStyle(new Notification.BigTextStyle().bigText(bigText));
+    }
+
+    private static void sendText() {
+        try {
+            applyText();
+            mNotifyManager.notify(NOTIFICATION_ID, builder.build());
+        } catch (Exception e) {
+            Log.printStackTrace(e);
+        }
+    }
+
+    /**
+     * 重载后未执行时刷新一次：只写「等待执行 + 下次执行时间」与能量行。
+     * <p>不写「上次执行」——这一轮并没有跑过，写现在的时刻会让人误以为刚执行完。
+     */
+    public static void updateIdleText() {
+        try {
+            String text = "等待执行";
+            if (nextExecTime > 0) {
+                text += "  下次执行 " + TimeUtil.getTimeStr(nextExecTime);
+            }
+            contentText = text;
+            lastNoticeTime = System.currentTimeMillis();
+            sendText();
+        } catch (Exception e) {
+            Log.printStackTrace(e);
+        }
+    }
+
+}
